@@ -1,46 +1,55 @@
 import streamlit as st
 import pandas as pd
 from engine.orchestrator import MasterOrchestrator
+from engine.processor import HPProcessor
+from engine.analysis import HPAnalysisEngine
 
-st.set_page_config(page_title="HP Motor v1.0", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="HP Motor v1.0", layout="wide")
 
-# UI Stil Ayarları
-st.markdown("<style>.main { background-color: #050505; color: #ffffff; }</style>", unsafe_allow_html=True)
+# Caravaggio UI: Chiaroscuro (Siyah zemin, altın vurgu)
+st.markdown("""
+    <style>
+    .main { background-color: #050505; color: #ffffff; }
+    .stExpander { background-color: #111111; border: 1px solid #FFD700; }
+    </style>
+    """, unsafe_allow_html=True)
 
 st.title("🛡️ HP Motor v1.0 | Sovereign Intelligence")
 
-uploaded_file = st.file_uploader("SportsBase / CSV / Excel Verisi Yükle", type=['csv', 'xlsx'])
+uploaded_file = st.file_uploader("Dosyayı Yükle (CSV/XLSX/ZIP)", type=['csv', 'xlsx', 'zip'])
 
 if uploaded_file:
-    # Veri Okuma
-    df = pd.read_csv(uploaded_file, sep=';') if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+    df = pd.read_csv(uploaded_file, sep=';')
     
-    engine = MasterOrchestrator()
-    output = engine.run_analysis(df)
+    # 1. Processing (6 Faz & Katman)
+    processor = HPProcessor()
+    df = processor.segment_phases(df)
+    df = processor.apply_layers(df)
     
-    # 6 Fazlı Lens Paneli
-    st.sidebar.header("🔍 6 Fazlı Lens")
-    selected_phase = st.sidebar.selectbox("Analiz Fazı Seçin", 
-                                        ["Tümü", "F1: Organized Defense", "F2: Defensive Transition", 
-                                         "F3: Organized Attack", "F4: Offensive Transition", 
-                                         "F5: Set Pieces (Att)", "F6: Set Pieces (Def)"])
+    # 2. Analysis (Claims)
+    analyst = HPAnalysisEngine()
+    # Örnek hipotez üretimi
+    claim = analyst.create_claim(
+        "Atletico duran top (F5) organizasyonunda domine ediyor.",
+        df,
+        "set_piece_xg > 0.3"
+    )
+    
+    # UI Yerleşimi: Altın Oran (%61.8 - %38.2)
+    col_main, col_side = st.columns([618, 382])
+    
+    with col_main:
+        st.subheader("🏟️ Saper Vedere (Görmeyi Bilmek)")
+        # Buraya Da Vinci hassasiyetinde saha çizimleri gelecek
+        st.dataframe(df[['action', 'phase_hp', 'layer_hp', 'x_std', 'y_std']].head(20))
 
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.subheader("📋 Klinik Tespit")
-        st.metric("Veri Kapsamı", f"%{output['report']['health_score']*100:.1f}")
-        st.write(f"SOT Durumu: **{output['report']['status']}**")
-        
-    with col2:
-        st.subheader("📊 Kanıt Zinciri (Popperian Claims)")
-        if not output['claims']:
-            st.info("Henüz yeterli kanıt zinciri oluşturulmadı. Daha fazla veri bekleniyor.")
-        for claim in output['claims']:
-            st.success(f"**Hipotez:** {claim['hypothesis']}")
-            st.write(f"**Kanıtlar:** {', '.join(claim['evidence'])}")
-            st.warning(f"**Yanlışlama Testi:** {claim['falsification']}")
+    with col_side:
+        st.subheader("💡 Chiaroscuro Analysis")
+        for c in claim['claims']:
+            with st.expander(f"İddia: {c['text']}", expanded=True):
+                st.write(f"**Güven Skoru:** %{c['confidence']['score']*100}")
+                st.warning(f"**Yanlışlama Testi:** {c['falsification']['tests'][0]['name']}")
+                st.info(f"**Durum:** {c['status']}")
 
-    st.divider()
-    st.subheader("İşlenmiş Veri (HP-CDL Standart)")
-    st.dataframe(output['data'].head(20))
+st.sidebar.markdown("---")
+st.sidebar.write("HP Motor v1.0 | Karl Popper Epistemolojisi ile Çalışır.")
