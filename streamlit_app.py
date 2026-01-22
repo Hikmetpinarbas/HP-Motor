@@ -1,42 +1,27 @@
 import streamlit as st
-import pandas as pd
-from engine.signal_processor import SignalProcessor
-from engine.claim_engine import ClaimEngine
+from engine.validator import SOTValidator
+from engine.processor import HPProcessor
+from engine.analyst import HPAnalyst
 
-st.set_page_config(page_title="HP Motor | Sovereign Intelligence", layout="wide")
+st.set_page_config(page_title="HP Motor v1.1", layout="wide")
+st.title("🛡️ HP Motor v1.1 | Sovereign Intelligence")
 
-# Chiaroscuro CSS
-st.markdown("<style>.main { background-color: #050505; color: #ffffff; }</style>", unsafe_allow_html=True)
-
-st.title("🛡️ HP Motor v1.0")
-
-uploaded_file = st.file_uploader("Veri Kaynağını (CSV/ZIP) Yükle", type=['csv', 'zip'])
+uploaded_file = st.file_uploader("SportsBase / CSV Yükle", type=['csv'])
 
 if uploaded_file:
-    df = pd.read_csv(uploaded_file, sep=';')
+    raw_df = pd.read_csv(uploaded_file, sep=';')
     
-    # 1. Sinyal İşleme
-    sp = SignalProcessor()
-    signals = sp.ingest(df, provider="SportsBase")
+    # KÜMÜLATİF AKIŞ: Validator -> Processor -> Analyst
+    report, data = SOTValidator().validate_and_normalize(raw_df)
+    data = HPProcessor().apply_lens(data)
+    claim = HPAnalyst().create_evidence_chain("Atletico Savunma Bloğu (F1) Kompakt", "ppda < 10")
     
-    # 2. Analiz ve Hipotez (Örnek)
-    ce = ClaimEngine()
-    report = ce.generate_tactical_claim(
-        "Atletico Madrid Phase 5 (Set-Piece) Dominansı Mevcut.",
-        {"set_piece_xg": 0.45},
-        "set_piece_xg > 0.1"
-    )
-    
-    # UI: Altın Oran Yerleşimi
+    # UI: Altın Oran (%61.8 Ana / %38.2 Yan)
     col_main, col_side = st.columns([618, 382])
-    
     with col_main:
-        st.subheader("🏟️ Saper Vedere (Anatomik Gözlem)")
-        st.dataframe(df.head(15)) # İleride Da Vinci saha çizimi gelecek
-
+        st.subheader("🏟️ Saper Vedere (Görsel Kanıt)")
+        st.dataframe(data.head(20))
     with col_side:
-        st.subheader("💡 Chiaroscuro Analysis")
-        for c in report['claims']:
-            with st.expander(f"İddia: {c['text']}", expanded=True):
-                st.write(f"**Güven Skoru:** %{c['confidence']['score']*100}")
-                st.error(f"**Yanlışlama Testi:** {c['falsification']['tests'][0]['name']}")
+        st.subheader("💡 Chiaroscuro Analysis (Sinyal)")
+        st.success(f"**Hipotez:** {claim['text']}")
+        st.warning(f"**Yanlışlama:** {claim['falsification']['test']}")
