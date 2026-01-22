@@ -1,28 +1,22 @@
 import pandas as pd
-import numpy as np
+import json
 
 class SOTValidator:
-    def __init__(self):
-        # Canonical Saha Ölçüleri (Metre)
-        self.target_dims = {'x': 105, 'y': 68}
+    def __init__(self, ontology_path="canon/metric_ontology.json"):
+        with open(ontology_path, 'r', encoding='utf-8') as f:
+            self.ontology = json.load(f)
+        self.dims = {'x': 105, 'y': 68}
 
-    def validate(self, df):
-        report = {"status": "HEALTHY", "issues": [], "coverage": 0.0}
+    def clean_and_normalize(self, df):
+        # 0.0 değerlerini silmeden canonical koordinatlara taşıma
+        if 'pos_x' in df.columns and 'pos_y' in df.columns:
+            df['x_std'] = df['pos_x'] * (self.dims['x'] / 100)
+            df['y_std'] = df['pos_y'] * (self.dims['y'] / 100)
         
-        # 1. Koordinat Normalizasyonu (0.0 Değerleri Korunur)
-        # Formüller:
-        # $x_{std} = x_{raw} \cdot \frac{105}{100}$
-        # $y_{std} = y_{raw} \cdot \frac{68}{100}$
-        
-        df['x_std'] = df['pos_x'] * (self.target_dims['x'] / 100)
-        df['y_std'] = df['pos_y'] * (self.target_dims['y'] / 100)
-
-        # 2. Veri Sağlık Denetimi (Explicit Audit)
-        valid_rows = df['pos_x'].notnull().sum()
-        report["coverage"] = valid_rows / len(df)
-        
-        if report["coverage"] < 1.0:
-            report["status"] = "DEGRADED"
-            report["issues"].append(f"Veri Kaybı: %{100 - (report['coverage']*100):.2f} oranında boş koordinat.")
-
+        # Boş veri raporu
+        report = {
+            "total_rows": len(df),
+            "health_score": df.notnull().mean().mean(),
+            "status": "HEALTHY" if df.notnull().mean().mean() > 0.9 else "DEGRADED"
+        }
         return report, df
