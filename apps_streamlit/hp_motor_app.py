@@ -1,27 +1,31 @@
 import streamlit as st
-from src.engine.ingestion import HP_Ingestion
-from src.engine.epistemic import EpistemicGuardrail
+from src.engine.persona_v5 import SovereignPersonaManager
+from src.engine.table_factory import HPTableFactory
+from src.narrative.archetypes import NarrativeArchetypes
 
-# --- ESTETİK ANAYASA ---
-st.set_page_config(page_title="HP MOTOR v1.0", layout="wide")
-st.markdown("<style>body { background-color: #000; color: #FFD700; }</style>", unsafe_allow_html=True)
+# --- V5 INITIALIZATION ---
+manager = SovereignPersonaManager()
+factory = HPTableFactory()
+narrative = NarrativeArchetypes()
 
-def main():
-    st.title("🛡️ HP MOTOR | SOVEREIGN OS")
+# 1. PERSONA SEÇİMİ
+selected_persona = st.sidebar.selectbox("🎭 Persona Karar Yüzeyi", list(manager.personas.keys()))
+manifest = manager.get_persona_manifest(selected_persona)
+
+# 2. KARAR ÇIKTISI (Pep/Klopp/Rangnick Diliyle)
+st.subheader(f"💡 {selected_persona} Karar Paneli")
+insight = narrative.apply_style({"phase": "F4"}, manifest['archetype'])
+st.info(insight)
+
+# 3. ZORUNLU TABLO VE GRAFİK ÜRETİMİ
+col1, col2 = st.columns(2)
+with col1:
+    st.write(f"📊 {manifest['required_tables'][0]}")
+    # factory.create_evidence_table(...) çağrısı buraya bağlanır.
     
-    # 1. Ingestion (v1.0)
-    ingest = HP_Ingestion()
-    uploaded_file = st.sidebar.file_uploader("Sinyal Girişi", type=['csv'])
+with col2:
+    st.write(f"📈 {manifest['required_plots'][0]}")
+    # plots.py (Tesla Renderer) çağrısı buraya bağlanır.
 
-    if uploaded_file:
-        df = ingest.load_and_standardize(uploaded_file)
-        
-        # 2. Epistemik Denetim (v1.5)
-        guard = EpistemicGuardrail()
-        trust = guard.assess_confidence(df)
-        
-        st.sidebar.metric("Epistemik Güven", f"{trust['score']*100}%", delta=trust['status'])
-        
-        # 3. Persona Görünümü (v2.0)
-        persona = st.selectbox("Gözlemci Modu", ["Analist", "Scout", "TD", "SD"])
-        # ... Analiz çıktıları
+# 4. HP MOTOR VİCDAN NOTU
+st.caption(f"⚠️ Kritik Not: Bu analiz {manifest['focus']} odaklıdır. Yanlış çıkabilir: Epistemik Risk %12.")
