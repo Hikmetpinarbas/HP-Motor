@@ -1,14 +1,15 @@
 import json
 
 class MetricRegistry:
-    def __init__(self):
-        # metric_ontology.json'daki 47 aileyi ve 400+ takma adı (alias) tanır
-        with open("canon/metric_ontology.json", "r") as f:
+    def __init__(self, ontology_path="canon/metric_ontology.json"):
+        with open(ontology_path, "r", encoding='utf-8') as f:
             self.ontology = json.load(f)
 
-    def resolve(self, raw_name):
-        # SportsBase kolonunu HP-CDL Kanonik ailesine bağlar
+    def resolve_metric(self, raw_name):
+        # Ham ismi kanonik aileye bağlar (xT, PPDA, NAS vb.)
+        raw_clean = raw_name.lower().strip()
         for family_id, info in self.ontology['canonical_families'].items():
-            if raw_name in info.get('aliases', []) or raw_name == family_id:
+            aliases = [a.lower() for a in info.get('aliases', [])]
+            if raw_clean == family_id or raw_clean in aliases:
                 return family_id
         return "UNKNOWN_SIGNAL"
