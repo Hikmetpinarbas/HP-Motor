@@ -1,0 +1,9 @@
+plot:
+  plot_id: risk_scatter
+  type: scatter
+  required_metrics: [xt_value, turnover_danger_index]
+  axes:
+    x: xt_value
+    y: turnover_danger_index
+  legend:
+    always: [percentile, sample_minutes, uncertainty]
