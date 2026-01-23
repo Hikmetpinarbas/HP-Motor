@@ -1,161 +1,45 @@
-registry:
-  id: HP_MASTER_REGISTRY
-  version: 0.2.0
-  ssot: true
+version: "1.0"
+meta:
+  description: "HP Motor Master Registry: archetypes, benchmarks, toggles"
+  canonical_metric_namespace: "hp_cdl"
 
-  canonical:
-    pitch_m: { length: 105, width: 68 }
-    rules:
-      dropna_forbidden: true
-      zeros_are_valid: true
+benchmarks:
+  scanning_frequency:
+    elite: 0.8     # scans per second (proxy)
+    average: 0.4
+  decision_speed_seconds:
+    elite_max: 0.8
+    average_max: 1.2
 
-  sources:
-    - source_id: generic_csv
-      type: tabular
-      reliability: variable
-    - source_id: generic_xml
-      type: tabular
-      reliability: variable
-    - source_id: opta_like
-      type: event
-      reliability: medium
-    - source_id: statsbomb_like
-      type: event
-      reliability: high
+toggles:
+  # Hipotez: progressive carry -> shot probability uplift
+  # Popper: Kural değil; opsiyonel katsayı. Default OFF.
+  progressive_carry_shot_uplift:
+    enabled: false
+    uplift_factor: 0.07
+    note: "Hipotez. Lig/rol bazlı kalibrasyon gerektirir."
 
-  ontology:
-    metric_families:
-      possession_value:
-        name_tr: "Top Değeri / Taşıma-Değer"
-        layer: mezzo
-        phases: [F1, F3, F5]
-        aliases: [xT, possession_value]
-      pressing_intensity:
-        name_tr: "Baskı / Pres Şiddeti"
-        layer: macro
-        phases: [F2, F6]
-        aliases: [PPDA, press_intensity]
-      ball_security:
-        name_tr: "Top Güvenliği / Top Kaybı Riski"
-        layer: mezzo
-        phases: [F3, F4, F5]
-        aliases: [turnover_danger, ball_security]
-      progression:
-        name_tr: "İlerleme (Carry/Pass)"
-        layer: mezzo
-        phases: [F1, F3]
-        aliases: [progressive, line_break]
-      space_occupation:
-        name_tr: "Alan Kullanımı"
-        layer: micro
-        phases: [F1, F3, F5]
-        aliases: [half_space, zone_occupation]
-      role_model:
-        name_tr: "Rol Modeli / Benchmark"
-        layer: macro
-        phases: [F0, F1, F2, F3, F4, F5, F6]
-        aliases: [role_fit, benchmark]
+archetypes:
+  - id: PRESS_RESISTANT_CM
+    name: "Press-Resistant CM"
+    logic: "high_composure_under_load"
+    required_metrics:
+      pressured_pass_completion_pct: { min: 65 }
+      successful_dribbles_per_90: { min: 0.55 }
+      turnovers_per_90: { max: 1.2 }
+    recommended_metrics:
+      - contextual_awareness_score
+      - decision_speed_mean_s
+      - turnover_danger_index
 
-  # ---- METRICS (v1.0: player_role_fit için minimum çekirdek) ----
-  metrics:
-    - metric_id: xt_value
-      label: "Expected Threat (xT) value"
-      description: "Oyuncunun aksiyonlarının topu daha değerli bölgelere taşıma ve gol olasılığına etkisi. Toplam veya 90'a normalize edilebilir."
-      unit: "xT"
-      family: possession_value
-      level: player
-      normalize:
-        kind: per90
-        minutes_field: minutes
-      expects:
-        inputs:
-          - { field: xT, type: number, required: false }
-          - { field: xt, type: number, required: false }
-      aliases: [xT, xt, xthreat]
-
-    - metric_id: ppda
-      label: "PPDA"
-      description: "Rakibin kendi yarı sahasında yaptığı pas sayısı / savunma aksiyonu. Düşük PPDA daha yüksek pres yoğunluğu anlamına gelir."
-      unit: "ratio"
-      family: pressing_intensity
-      level: team
-      normalize:
-        kind: raw
-      expects:
-        inputs:
-          - { field: ppda, type: number, required: false }
-          - { field: PPDA, type: number, required: false }
-      aliases: [PPDA, ppda]
-
-    - metric_id: turnover_danger_index
-      label: "Turnover Danger Index"
-      description: "Top kayıplarının (turnover) kalite/konum/tempo bağlamında tehlike katsayısı. Yüksek değer risklidir."
-      unit: "index"
-      family: ball_security
-      level: player
-      normalize:
-        kind: per90
-        minutes_field: minutes
-      expects:
-        inputs:
-          - { field: turnover_danger_90, type: number, required: false }
-          - { field: turnover_danger, type: number, required: false }
-      aliases: [turnover_danger_90, turnover_danger, loss_danger]
-
-    - metric_id: progressive_carries_90
-      label: "Progressive Carries /90"
-      description: "Oyuncunun ilerletici (progressive) top sürme sayısı 90 dakika başına."
-      unit: "count_per90"
-      family: progression
-      level: player
-      normalize:
-        kind: per90
-        minutes_field: minutes
-      expects:
-        inputs:
-          - { field: prog_carries_90, type: number, required: false }
-          - { field: progressive_carries_90, type: number, required: false }
-      aliases: [prog_carries_90, progressive_carries_90]
-
-    - metric_id: line_break_passes_90
-      label: "Line-breaking passes /90"
-      description: "Savunma hattını kıran pas sayısı 90 dakika başına."
-      unit: "count_per90"
-      family: progression
-      level: player
-      normalize:
-        kind: per90
-        minutes_field: minutes
-      expects:
-        inputs:
-          - { field: line_break_passes_90, type: number, required: false }
-          - { field: lb_passes_90, type: number, required: false }
-      aliases: [line_break_passes_90, lb_passes_90]
-
-    - metric_id: half_space_receives
-      label: "Half-space receives"
-      description: "Oyuncunun half-space bölgelerinde top alma/karşılama hacmi. (90'a normalize edilebilir)"
-      unit: "count"
-      family: space_occupation
-      level: player
-      normalize:
-        kind: per90
-        minutes_field: minutes
-      expects:
-        inputs:
-          - { field: half_space_receives, type: number, required: false }
-          - { field: half_space_receives_90, type: number, required: false }
-      aliases: [half_space_receives, half_space_receives_90]
-
-    - metric_id: role_benchmark_percentiles
-      label: "Role benchmark percentiles"
-      description: "Rol bazlı benchmark tablosu/percentile çıktısı (v1: placeholder). İleride lig/pozisyon normlarıyla hesaplanır."
-      unit: "object"
-      family: role_model
-      level: player
-      normalize:
-        kind: raw
-      expects:
-        inputs:
-          - { field: benchmark, type: object, required: false }
-      aliases: [benchmark, percentiles]
+  - id: BALL_PLAYING_CB
+    name: "Ball-Playing CB"
+    logic: "deep_playmaking_structure"
+    required_metrics:
+      progressive_passes_per_90: { min: 4.5 }
+      long_ball_accuracy_pct: { min: 60 }
+      line_break_passes_90: { min: 2.0 }
+    recommended_metrics:
+      - defender_side_on_score
+      - turnover_danger_index
+      - contextual_awareness_score
