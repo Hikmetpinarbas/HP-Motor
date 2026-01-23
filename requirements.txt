@@ -7,3 +7,4 @@ mplsoccer
 seaborn
 github-copilot-sdk
 openpyxl
+pyyaml
