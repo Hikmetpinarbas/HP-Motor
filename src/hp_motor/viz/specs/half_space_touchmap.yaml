@@ -1,0 +1,7 @@
+plot:
+  plot_id: half_space_touchmap
+  type: pitch_heatmap
+  required_inputs: [actions]
+  filters: { open_play_only: true }
+  legend:
+    always: [sample_minutes, source]
