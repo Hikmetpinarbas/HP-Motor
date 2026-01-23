@@ -18,8 +18,8 @@ except ImportError as e:
     st.error(f"Kritik Hata: 'src' klasörü altındaki modüller okunamıyor. Hata: {e}")
     st.stop()
 
-st.set_page_config(page_title="HP MOTOR v8.0 | Atlas Edition", layout="wide", page_icon="🛡️")
-st.title("🛡️ HP MOTOR v8.0 | ATLAS EDITION")
+st.set_page_config(page_title="HP MOTOR v6.0", layout="wide", page_icon="🛡️")
+st.title("🛡️ HP MOTOR v6.0 | ARCHITECT")
 
 @st.cache_resource
 def load_orchestrator():
@@ -27,6 +27,9 @@ def load_orchestrator():
 
 orchestrator = load_orchestrator()
 
+# ----------------------------
+# Helpers
+# ----------------------------
 def detect_phase(filename: str) -> str:
     fname = (filename or "").lower()
     if any(k in fname for k in ["pozisyon", "hucum", "hücum", "attack", "offensive"]):
@@ -38,6 +41,7 @@ def detect_phase(filename: str) -> str:
     return "ACTION_GENERIC"
 
 def canonicalize_xy_inplace(df: pd.DataFrame) -> pd.DataFrame:
+    # 0..100 -> 105x68 heuristic
     if df is None or df.empty:
         return df
     if "x" in df.columns and "y" in df.columns:
@@ -72,7 +76,7 @@ def adapt_for_agent_verdict(out: dict, phase: str) -> dict:
 
     legacy_metrics = {
         "PPDA": float(m.get("ppda", 12.0)) if m.get("ppda") is not None else 12.0,
-        "xG": 0.0,
+        "xG": float(m.get("xg", 0.0)) if m.get("xg") is not None else 0.0,
     }
 
     return {
@@ -81,10 +85,19 @@ def adapt_for_agent_verdict(out: dict, phase: str) -> dict:
         "confidence": confidence_from_evidence(out),
     }
 
+# ----------------------------
+# Robust file reading
+# ----------------------------
 def _read_bytes(uploaded_file) -> bytes:
     return uploaded_file.getvalue()
 
 def read_uploaded_artifact(uploaded_file):
+    """
+    Returns:
+      kind: 'dataframe' | 'text' | 'video' | 'blocked'
+      payload: pd.DataFrame or str or bytes
+      meta: dict
+    """
     name = uploaded_file.name
     ext = os.path.splitext(name)[1].lower()
     meta = {"filename": name, "ext": ext}
@@ -162,6 +175,7 @@ def text_to_signal_df(text: str) -> pd.DataFrame:
 # Sidebar
 # ----------------------------
 st.sidebar.header("📥 Veri Girişi")
+
 uploaded_files = st.sidebar.file_uploader(
     "Sinyalleri Bırakın (CSV, XML, XLSX, HTML, TXT, PDF, DOCX, MP4)",
     accept_multiple_files=True,
@@ -169,36 +183,36 @@ uploaded_files = st.sidebar.file_uploader(
 )
 
 persona = st.sidebar.selectbox("Analiz Personası", ["Match Analyst", "Scout", "Technical Director"])
-role = st.sidebar.text_input("Rol", value="Mezzala")
-analysis_object_id = st.sidebar.selectbox("Analysis Object", ["player_role_fit", "player_dossier"], index=1)
+role = st.sidebar.text_input("Rol (player_role_fit)", value="Mezzala")
+analysis_object_id = st.sidebar.selectbox("Analysis Object", ["player_role_fit"], index=0)
 
-# Atlas: archetype selector (UI filter)
-archetype_filter = st.sidebar.selectbox(
-    "Atlas Arketip Filtresi (opsiyonel)",
+# Archetype selector (Atlas)
+archetype_id = st.sidebar.selectbox(
+    "Arketip (Atlas)",
     ["(none)", "PRESS_RESISTANT_CM", "BALL_PLAYING_CB"],
-    index=0
+    index=0,
 )
 
-show_figures = st.sidebar.checkbox("Grafikleri Göster", value=True)
 show_tables = st.sidebar.checkbox("Tabloları Göster", value=True)
 show_lists = st.sidebar.checkbox("Listeleri Göster", value=True)
-show_atlas = st.sidebar.checkbox("Atlas (Arketip + Similarity) Göster", value=True)
+show_figures = st.sidebar.checkbox("Grafikleri Göster", value=True)
 
 # ----------------------------
 # Main
 # ----------------------------
 if not uploaded_files:
-    st.info("Sinyal bekleniyor...")
+    st.info("Sinyal bekleniyor... Saper Vedere.")
     st.stop()
 
 for uploaded_file in uploaded_files:
     with st.expander(f"⚙️ Analiz: {uploaded_file.name}", expanded=True):
         phase = detect_phase(uploaded_file.name)
+
         kind, payload, meta = read_uploaded_artifact(uploaded_file)
 
         if kind == "video":
             st.video(payload)
-            st.info(f"Faz: {phase} | Video sinyali alındı. (v1: video pipeline bağlı değil)")
+            st.info(f"Faz: {phase} | Video sinyali alındı. (v1.0: video pipeline bağlı değil)")
             continue
 
         if kind == "blocked":
@@ -216,13 +230,14 @@ for uploaded_file in uploaded_files:
                 if candidates:
                     entity_id = st.selectbox("player_id", candidates, index=0)
 
-            with st.spinner("HP Motor çalışıyor..."):
+            with st.spinner("Sovereign Intelligence işleniyor..."):
                 out = orchestrator.execute(
                     analysis_object_id=analysis_object_id,
                     raw_df=df,
                     entity_id=str(entity_id),
                     role=role,
                     phase=phase,
+                    archetype_id=None if archetype_id == "(none)" else archetype_id,
                 )
 
         else:
@@ -232,13 +247,15 @@ for uploaded_file in uploaded_files:
             st.write("Metin Önizleme", (txt[:1500] + " ...") if len(txt) > 1500 else txt)
 
             df = text_to_signal_df(txt)
-            with st.spinner("HP Motor çalışıyor..."):
+
+            with st.spinner("Sovereign Intelligence işleniyor..."):
                 out = orchestrator.execute(
                     analysis_object_id=analysis_object_id,
                     raw_df=df,
                     entity_id="entity",
                     role=role,
                     phase=phase,
+                    archetype_id=None if archetype_id == "(none)" else archetype_id,
                 )
 
         if out.get("status") != "OK":
@@ -255,32 +272,8 @@ for uploaded_file in uploaded_files:
             st.metric("Güven", f"%{int(conf*100)}")
         with c2:
             st.info(f"Faz: {phase}")
-            miss = out.get("missing_metrics", [])
-            if miss:
-                st.warning(f"Missing: {', '.join(miss[:6])}" + ("..." if len(miss) > 6 else ""))
         with c3:
             st.warning(f"**Sovereign Verdict:** {verdict}")
-
-        # Atlas panel
-        if show_atlas and analysis_object_id == "player_dossier":
-            atlas = out.get("atlas", {}) or {}
-            arch = atlas.get("archetypes", []) or []
-            sim = atlas.get("similarity_top", []) or []
-
-            st.subheader("🧬 Atlas: Arketipler")
-            if arch:
-                # optional filter
-                if archetype_filter != "(none)":
-                    arch = [a for a in arch if a.get("id") == archetype_filter]
-                st.dataframe(pd.DataFrame(arch), use_container_width=True)
-            else:
-                st.info("Arketip sonucu yok (metric eksik olabilir).")
-
-            st.subheader("🧩 Atlas: Similarity (Aday İkame Listesi)")
-            if sim:
-                st.dataframe(pd.DataFrame(sim), use_container_width=True)
-            else:
-                st.info("Similarity üretilemedi (df’de tek oyuncu olabilir veya metrik örtüşmesi az).")
 
         if show_tables:
             st.subheader("📋 Tables")
