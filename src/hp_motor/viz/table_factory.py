@@ -1,33 +1,47 @@
 from __future__ import annotations
 
-from typing import Dict, List
-
+from typing import Dict, List, Any, Optional
 import pandas as pd
 
 
 class TableFactory:
-    def build_evidence_table(self, metric_values: List[dict], evidence_graph: Dict) -> pd.DataFrame:
-        # metric_values in run_analysis is list of dicts in return; here accept MetricValue dicts or objects
+    """
+    v1.1 API (tek ve sabit):
+      - build_evidence_table(metric_values, evidence_graph)
+      - build_role_fit_table(role, metric_map, confidence)
+      - build_risk_uncertainty_table(missing_metrics, evidence_graph)
+    """
+
+    def build_evidence_table(self, metric_values: List[Any], evidence_graph: Dict) -> pd.DataFrame:
         rows = []
-        for m in metric_values:
+        for m in metric_values or []:
             if isinstance(m, dict):
                 rows.append(
                     {
                         "metric_id": m.get("metric_id"),
+                        "entity_type": m.get("entity_type"),
+                        "entity_id": m.get("entity_id"),
                         "value": m.get("value"),
-                        "sample_minutes": m.get("sample_size"),
+                        "unit": m.get("unit"),
+                        "sample_size": m.get("sample_size"),
                         "source": m.get("source", "raw_df"),
+                        "uncertainty": m.get("uncertainty"),
                     }
                 )
             else:
                 rows.append(
                     {
                         "metric_id": getattr(m, "metric_id", None),
+                        "entity_type": getattr(m, "entity_type", None),
+                        "entity_id": getattr(m, "entity_id", None),
                         "value": getattr(m, "value", None),
-                        "sample_minutes": getattr(m, "sample_size", None),
+                        "unit": getattr(m, "unit", None),
+                        "sample_size": getattr(m, "sample_size", None),
                         "source": getattr(m, "source", "raw_df"),
+                        "uncertainty": getattr(m, "uncertainty", None),
                     }
                 )
+
         df = pd.DataFrame(rows)
         df["confidence"] = (evidence_graph or {}).get("overall_confidence", "medium")
         return df
@@ -39,11 +53,12 @@ class TableFactory:
         lb = float(metric_map.get("line_break_passes_90", 0.0) or 0.0)
         risk = float(metric_map.get("turnover_danger_index", 0.0) or 0.0)
 
-        # crude score: reward xt/prog/lb, penalize risk
+        # simple score: reward xt/prog/lb, penalize risk
         score = (0.4 * xt) + (0.25 * prog) + (0.25 * lb) - (0.3 * risk)
 
         strengths = []
         risks = []
+
         if xt >= 0.5:
             strengths.append("xT üretimi yüksek")
         if prog >= 4:
