@@ -1,0 +1,55 @@
+version: 1
+provider: generic_xml
+
+columns:
+  PlayerId: player_id
+  playerId: player_id
+  player_id: player_id
+
+  Minutes: minutes
+  minutes: minutes
+  MinutesPlayed: minutes
+
+  xT: xt_value
+  xT_value: xt_value
+  xt_value: xt_value
+
+  PPDA: ppda
+  ppda: ppda
+
+  ProgressiveCarries90: progressive_carries_90
+  progressive_carries_90: progressive_carries_90
+
+  LineBreakPasses90: line_break_passes_90
+  line_break_passes_90: line_break_passes_90
+
+  HalfSpaceReceives: half_space_receives
+  half_space_receives: half_space_receives
+
+  TurnoverDanger90: turnover_danger_index
+  turnover_danger_90: turnover_danger_index
+  turnover_danger_index: turnover_danger_index
+
+  # Cognitive
+  t1: t1
+  t2: t2
+  scan_count_10s: scan_count_10s
+  scanCount10s: scan_count_10s
+  scan_count: scan_count
+  scanWindowS: scan_window_s
+  scan_window_s: scan_window_s
+
+  # Orientation
+  defender_body_angle_deg: defender_body_angle_deg
+  body_angle_deg: defender_body_angle_deg
+  bodyAngleDeg: defender_body_angle_deg
+  body_angle: defender_body_angle_deg
+
+  # Spatial
+  x: x
+  y: y
+  X: x
+  Y: y
+
+  channel_target: channel_target
+  channelTarget: channel_target
