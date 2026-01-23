@@ -1,0 +1,28 @@
+version: "1.0.0"
+metadata:
+  contract: HP_MASTER_REGISTRY_V1
+
+# 1. ONTOLOGY (Metrik Aileleri ve Fazlar)
+ontology:
+  phases: ["F1", "F2", "F3", "F4", "F5", "F6"]
+  dimensions: ["tactical", "technical", "physical", "neuro"]
+
+# 2. METRICS (Registry v2 & Definitions birleşimi)
+metrics:
+  - id: "PPDA"
+    family: "pressing"
+    polarity: -1
+    full_logic: "calc_ppda_full_v1"
+    fallback: 12.4
+    viz:
+      chart: "sparkline"
+      caption: "PPDA {value} — press yoğunluğu {interpretation}."
+
+# 3. MAPPINGS (Provider Aliases)
+mappings:
+  SportsBase:
+    x_scale: 100
+    y_scale: 100
+    columns:
+      event_type: "action"
+      x: "pos_x"
