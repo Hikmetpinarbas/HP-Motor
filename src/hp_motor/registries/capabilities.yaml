@@ -1,0 +1,41 @@
+version: "1.0"
+notes: >
+  v1 capability layer. Norm/percentile yok; skorlar heuristik.
+  Ama mimari olarak "metric -> capability -> role -> verdict" zincirini başlatır.
+
+capabilities:
+  threat_progression:
+    label: "Threat Progression"
+    metrics:
+      xt_value: 0.45
+      progressive_carries_90: 0.25
+      line_break_passes_90: 0.25
+      half_space_receives: 0.05
+
+  press_resistance:
+    label: "Press Resistance"
+    metrics:
+      turnover_danger_index: -0.55
+      contextual_awareness_score: 0.25
+      decision_speed_mean_s: -0.20
+
+  chance_creation:
+    label: "Chance Creation"
+    metrics:
+      xt_value: 0.55
+      line_break_passes_90: 0.30
+      half_space_receives: 0.15
+
+  cognitive_readiness:
+    label: "Cognitive Readiness"
+    metrics:
+      contextual_awareness_score: 0.55
+      scan_freq_10s: 0.25
+      decision_speed_mean_s: -0.20
+
+  defensive_stability:
+    label: "Defensive Stability"
+    metrics:
+      ppda: -0.35
+      turnover_danger_index: -0.35
+      defender_side_on_score: 0.30
