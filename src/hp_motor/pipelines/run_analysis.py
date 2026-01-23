@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 import yaml
@@ -10,15 +10,27 @@ import yaml
 RawArtifact = Union[pd.DataFrame, Dict[str, Any], Any]
 
 from hp_motor.core.cdl_models import MetricValue
-from hp_motor.core.evidence_models import EvidenceGraph, EvidenceNode, Hypothesis
+
+# ---- Evidence models (Hypothesis might be missing in some builds)
+try:
+    from hp_motor.core.evidence_models import EvidenceGraph, EvidenceNode, Hypothesis
+except ImportError:
+    from hp_motor.core.evidence_models import EvidenceGraph, EvidenceNode
+    from pydantic import BaseModel, Field
+
+    class Hypothesis(BaseModel):
+        hypothesis_id: str
+        claim: str
+        scope: Dict[str, Any] = Field(default_factory=dict)
+        falsifiers: List[str] = Field(default_factory=list)
+
 from hp_motor.core.provenance import RunProvenance
 
-# Viz layer (if present)
 from hp_motor.viz.renderer import PlotRenderer, RenderContext
 from hp_motor.viz.table_factory import TableFactory
 from hp_motor.viz.list_factory import ListFactory
 
-# Optional: mapping + validation (if you added them)
+# Optional: mapping + validation (if present)
 try:
     from hp_motor.ingest.provider_registry import ProviderRegistry
     from hp_motor.mapping.canonical_mapper import CanonicalMapper
@@ -100,7 +112,6 @@ class SovereignOrchestrator:
         if isinstance(artifact, pd.DataFrame):
             df = artifact
         else:
-            # If something else arrives, try to coerce
             df = pd.DataFrame(artifact) if artifact is not None else pd.DataFrame()
 
         entity_id = _pick_entity_id(df)
@@ -114,21 +125,19 @@ class SovereignOrchestrator:
             source="artifact",
         )
 
-        # Backward compatible "analysis" object for get_agent_verdict + UI
-        # Your old agent likely expects: analysis['metrics'] and analysis['confidence']
         eg = out.get("evidence_graph") or {}
         overall = eg.get("overall_confidence", "medium")
 
-        # Minimal legacy metrics
-        metrics_map = {}
-        for m in out.get("metrics", []) or []:
-            mid = m.get("metric_id")
-            val = m.get("value")
+        metrics_list = out.get("metrics", []) or []
+        m = {}
+        for row in metrics_list:
+            mid = row.get("metric_id")
+            val = row.get("value")
             if mid is not None:
-                metrics_map[mid] = val
+                m[mid] = val
 
         legacy_metrics = {
-            "PPDA": float(metrics_map.get("ppda", 12.0)) if metrics_map.get("ppda") is not None else 12.0,
+            "PPDA": float(m.get("ppda", 12.0)) if m.get("ppda") is not None else 12.0,
             "xG": 0.0,
         }
 
@@ -136,7 +145,6 @@ class SovereignOrchestrator:
             "confidence": _confidence_from_level(overall),
             "metrics": legacy_metrics,
             "metadata": {"phase": phase, "entity_id": entity_id},
-            # carry-through for richer UI if needed
             "tables": out.get("tables", {}),
             "lists": out.get("lists", {}),
             "figure_objects": out.get("figure_objects", {}),
@@ -168,7 +176,6 @@ class SovereignOrchestrator:
         # Validation (optional)
         data_quality = {"ok": True, "row_count": int(len(df)) if isinstance(df, pd.DataFrame) else 0, "issues": []}
         if self.validator is not None:
-            # If AO declares required columns, apply
             required_cols = []
             ic = ao.get("input_contract") or {}
             if isinstance(ic, dict):
@@ -195,7 +202,6 @@ class SovereignOrchestrator:
                 "figures": [],
             }
 
-        # ---- Metric extraction (v1: mean of available columns)
         deliver = ao.get("deliverables", {}) or {}
         col_map = (ao.get("input", {}) or {}).get("col_map", {}) or {}
 
@@ -237,10 +243,11 @@ class SovereignOrchestrator:
                     unit=None,
                     scope=phase,
                     sample_size=int(df["minutes"].sum()) if isinstance(df, pd.DataFrame) and "minutes" in df.columns else None,
+                    source=source,
+                    uncertainty=None,
                 )
             )
 
-        # ---- Evidence graph (light v1)
         eg = EvidenceGraph(
             hypotheses=[
                 Hypothesis(
@@ -266,7 +273,6 @@ class SovereignOrchestrator:
 
         metric_map = {m.metric_id: m.value for m in metric_values}
         sample_minutes = next((m.sample_size for m in metric_values if getattr(m, "sample_size", None) is not None), None)
-
         ctx = RenderContext(theme=self.renderer.theme, sample_minutes=sample_minutes, source=source, uncertainty=None)
 
         figures: Dict[str, Any] = {}
