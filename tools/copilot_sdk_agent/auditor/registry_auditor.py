@@ -10,7 +10,7 @@ import yaml
 from tools.copilot_sdk_agent.auditor.report_schema import AuditReport, Finding, derive_status
 
 
-def _safe_read_text(p: Path, limit: int = 200_000) -> str:
+def _safe_read_text(p: Path, limit: int = 250_000) -> str:
     if not p.exists():
         return ""
     return p.read_text(encoding="utf-8", errors="replace")[:limit]
@@ -35,13 +35,6 @@ def _list_yaml_files(dir_path: Path) -> List[Path]:
 
 
 def _guess_registry_metrics(reg: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
-    """
-    Tries common shapes:
-      - reg["metrics"] as list[dict]
-      - reg["registry"]["metrics"] as list[dict]
-      - reg itself as list (rare) -> treated as metrics list
-    Returns: (metrics_list, location_string)
-    """
     if reg is None:
         return [], "missing"
 
@@ -66,20 +59,35 @@ def _metric_id(m: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _extract_required_metrics_from_ao(ao: Dict[str, Any]) -> List[str]:
+def _extract_metric_refs_from_ao(ao: Dict[str, Any]) -> List[str]:
     """
-    Looks for:
-      ao.deliverables.required_metrics: list[str]
+    Supports both:
+      - ao.metric_bundle: [metric_id...]
+      - ao.deliverables.required_metrics: [metric_id...]
     """
+    refs: List[str] = []
+
     if not isinstance(ao, dict):
-        return []
+        return refs
+
+    mb = ao.get("metric_bundle")
+    if isinstance(mb, list):
+        refs.extend([str(x).strip() for x in mb if str(x).strip()])
+
     deliver = ao.get("deliverables")
-    if not isinstance(deliver, dict):
-        return []
-    rm = deliver.get("required_metrics")
-    if isinstance(rm, list):
-        return [str(x).strip() for x in rm if str(x).strip()]
-    return []
+    if isinstance(deliver, dict):
+        rm = deliver.get("required_metrics")
+        if isinstance(rm, list):
+            refs.extend([str(x).strip() for x in rm if str(x).strip()])
+
+    # uniq preserve order
+    seen = set()
+    out = []
+    for r in refs:
+        if r not in seen:
+            out.append(r)
+            seen.add(r)
+    return out
 
 
 def _extract_plot_ids_from_ao(ao: Dict[str, Any]) -> List[str]:
@@ -97,18 +105,14 @@ def _extract_plot_ids_from_ao(ao: Dict[str, Any]) -> List[str]:
 class RegistryAuditor:
     def __init__(self, repo_root: Path):
         self.repo_root = repo_root
-
-        # canonical locations expected by HP Motor
         self.master_registry_path = repo_root / "src" / "hp_motor" / "registries" / "master_registry.yaml"
         self.analysis_objects_dir = repo_root / "src" / "hp_motor" / "pipelines" / "analysis_objects"
         self.mappings_dir = repo_root / "src" / "hp_motor" / "registries" / "mappings"
-        self.specs_dir = repo_root / "src" / "hp_motor" / "viz" / "specs"
 
     def run(self) -> AuditReport:
         rid = f"registry_audit_{int(time.time())}"
         findings: List[Finding] = []
 
-        # 1) Existence checks
         if not self.master_registry_path.exists():
             findings.append(
                 Finding(
@@ -117,7 +121,6 @@ class RegistryAuditor:
                     title="master_registry.yaml missing",
                     detail=f"Expected at: {self.master_registry_path.as_posix()}",
                     file=self.master_registry_path.as_posix(),
-                    hint="Create src/hp_motor/registries/master_registry.yaml (YAML).",
                 )
             )
 
@@ -129,11 +132,9 @@ class RegistryAuditor:
                     title="analysis_objects directory missing",
                     detail=f"Expected at: {self.analysis_objects_dir.as_posix()}",
                     file=self.analysis_objects_dir.as_posix(),
-                    hint="Create src/hp_motor/pipelines/analysis_objects and add at least player_role_fit.yaml",
                 )
             )
 
-        # 2) Parse master registry
         reg = _load_yaml(self.master_registry_path) if self.master_registry_path.exists() else None
         if isinstance(reg, dict) and "__parse_error__" in reg:
             findings.append(
@@ -143,7 +144,6 @@ class RegistryAuditor:
                     title="master_registry.yaml cannot be parsed",
                     detail=str(reg.get("__parse_error__")),
                     file=self.master_registry_path.as_posix(),
-                    hint="Fix YAML syntax; validate with a YAML linter.",
                 )
             )
             reg = None
@@ -153,15 +153,13 @@ class RegistryAuditor:
             findings.append(
                 Finding(
                     code="REG_NO_METRICS",
-                    severity="WARN",
+                    severity="ERROR",
                     title="No metrics found in master registry",
-                    detail=f"Could not find metrics list in expected locations (metrics / registry.metrics). Location guess: {metrics_loc}",
+                    detail=f"Could not find metrics list. Location guess: {metrics_loc}",
                     file=self.master_registry_path.as_posix(),
-                    hint="Ensure master_registry.yaml contains a list of metrics with metric_id.",
                 )
             )
 
-        # 3) Metric hygiene checks
         metric_ids: List[str] = []
         missing_id_count = 0
         field_gaps = 0
@@ -173,7 +171,6 @@ class RegistryAuditor:
                 continue
             metric_ids.append(mid)
 
-            # soft schema checks
             if not m.get("label") and not m.get("name"):
                 field_gaps += 1
             if not m.get("description"):
@@ -188,7 +185,6 @@ class RegistryAuditor:
                     title="Duplicate metric_id values",
                     detail=f"Duplicates: {', '.join(dupes[:30])}" + (" ..." if len(dupes) > 30 else ""),
                     file=self.master_registry_path.as_posix(),
-                    hint="Each metric_id must be unique across the registry.",
                 )
             )
 
@@ -200,7 +196,6 @@ class RegistryAuditor:
                     title="Some metrics are missing metric_id",
                     detail=f"{missing_id_count} metric entries have no metric_id/id/key.",
                     file=self.master_registry_path.as_posix(),
-                    hint="Add metric_id to every metric dict. This is the canonical key.",
                 )
             )
 
@@ -212,13 +207,11 @@ class RegistryAuditor:
                     title="Some metrics lack label/description",
                     detail=f"Detected {field_gaps} missing label/name/description fields across metrics (soft schema).",
                     file=self.master_registry_path.as_posix(),
-                    hint="Add label + description for narrative quality and explainability.",
                 )
             )
 
         metric_id_set = set(metric_ids)
 
-        # 4) Analysis object checks
         ao_files = _list_yaml_files(self.analysis_objects_dir) if self.analysis_objects_dir.exists() else []
         if not ao_files:
             findings.append(
@@ -228,11 +221,10 @@ class RegistryAuditor:
                     title="No analysis objects found",
                     detail=f"No YAML files in {self.analysis_objects_dir.as_posix()}",
                     file=self.analysis_objects_dir.as_posix(),
-                    hint="Add at least player_role_fit.yaml to begin.",
                 )
             )
 
-        ao_required_total = 0
+        ao_metric_refs_total = 0
         ao_missing_metric_refs: Dict[str, List[str]] = {}
         ao_plot_ids_total = 0
 
@@ -246,15 +238,14 @@ class RegistryAuditor:
                         title="Analysis object YAML cannot be parsed",
                         detail=str((ao or {}).get("__parse_error__")),
                         file=p.as_posix(),
-                        hint="Fix YAML syntax for this analysis object.",
                     )
                 )
                 continue
 
-            required_metrics = _extract_required_metrics_from_ao(ao or {})
-            ao_required_total += len(required_metrics)
+            metric_refs = _extract_metric_refs_from_ao(ao or {})
+            ao_metric_refs_total += len(metric_refs)
 
-            missing = [m for m in required_metrics if m not in metric_id_set]
+            missing = [m for m in metric_refs if m not in metric_id_set]
             if missing:
                 ao_missing_metric_refs[p.name] = missing
 
@@ -262,7 +253,6 @@ class RegistryAuditor:
             ao_plot_ids_total += len(plot_ids)
 
         if ao_missing_metric_refs:
-            # ERROR: AO refers to non-existent registry metric_id
             first_key = next(iter(ao_missing_metric_refs.keys()))
             sample = ao_missing_metric_refs[first_key][:15]
             findings.append(
@@ -272,69 +262,52 @@ class RegistryAuditor:
                     title="Analysis Objects reference unknown metric_ids",
                     detail=(
                         f"{len(ao_missing_metric_refs)} AO file(s) reference missing metrics. "
-                        f"Example: {first_key} -> {', '.join(sample)}" + (" ..." if len(ao_missing_metric_refs[first_key]) > 15 else "")
+                        f"Example: {first_key} -> {', '.join(sample)}"
+                        + (" ..." if len(ao_missing_metric_refs[first_key]) > 15 else "")
                     ),
                     file=self.analysis_objects_dir.as_posix(),
-                    hint="Either add these metric_ids to master_registry.yaml or correct AO required_metrics to canonical ids.",
                 )
             )
 
-        # 5) Mappings / specs presence (soft)
         mapping_files = _list_yaml_files(self.mappings_dir) if self.mappings_dir.exists() else []
         if not mapping_files:
             findings.append(
                 Finding(
                     code="MAP_NONE",
-                    severity="INFO",
+                    severity="WARN",
                     title="No provider mapping files detected",
                     detail=f"No YAML files found under {self.mappings_dir.as_posix()}",
                     file=self.mappings_dir.as_posix(),
-                    hint="Add provider_generic_csv.yaml and provider mappings for platforms (FBref/StatsBomb/etc.) when ready.",
                 )
             )
 
-        # 6) Summarize
         status = derive_status(findings)
-        metric_count = len(metric_ids)
         summary = (
-            f"Registry audit complete. metrics={metric_count}, analysis_objects={len(ao_files)}, "
-            f"required_metric_refs={ao_required_total}, plots_in_aos={ao_plot_ids_total}. status={status}."
+            f"Registry audit complete. metrics={len(metric_ids)}, analysis_objects={len(ao_files)}, "
+            f"ao_metric_refs={ao_metric_refs_total}, plots_in_aos={ao_plot_ids_total}. status={status}."
         )
-
-        risks: List[str] = []
-        next_actions: List[str] = []
-
-        if status in ("FAIL", "WARN"):
-            risks.append("Registry/AO inconsistencies will cause missing_metrics, weak evidence graphs, and unstable narratives.")
-            risks.append("Provider mapping gaps will limit CSV/XML portability across data sources.")
-        if any(f.code == "AO_REF_UNKNOWN_METRIC" for f in findings):
-            next_actions.append("Normalize metric_id vocabulary: fix AO required_metrics to match master_registry.yaml (canonical ids).")
-        if any(f.code == "REG_NO_METRICS" for f in findings):
-            next_actions.append("Populate master_registry.yaml with at least the core v1.0 metric set used by player_role_fit.")
-        if any(f.code == "MAP_NONE" for f in findings):
-            next_actions.append("Add provider mapping YAMLs for CSV/XML ingestion (platform → canonical column map).")
 
         report = AuditReport(
             report_id=rid,
             status=status,
             summary=summary,
             stats={
-                "metrics_count": metric_count,
+                "metrics_count": len(metric_ids),
                 "analysis_object_count": len(ao_files),
-                "ao_required_metric_refs_total": ao_required_total,
+                "ao_metric_refs_total": ao_metric_refs_total,
                 "ao_plot_ids_total": ao_plot_ids_total,
                 "mapping_file_count": len(mapping_files),
                 "master_registry_location_guess": metrics_loc,
             },
             findings=findings,
-            risks=risks,
-            next_actions=next_actions,
+            risks=[],
+            next_actions=[],
         )
         return report
 
     def render_markdown(self, report: AuditReport) -> str:
         lines: List[str] = []
-        lines.append(f"# HP Motor Registry Audit تقرير")
+        lines.append("# HP Motor Registry Audit")
         lines.append("")
         lines.append(f"- **report_id:** `{report.report_id}`")
         lines.append(f"- **status:** `{report.status}`")
@@ -352,22 +325,6 @@ class RegistryAuditor:
                 loc = f" ({f.file})" if f.file else ""
                 lines.append(f"- **[{f.severity}] {f.code}** — {f.title}{loc}")
                 lines.append(f"  - {f.detail}")
-                if f.hint:
-                    lines.append(f"  - _hint:_ {f.hint}")
-        lines.append("")
-        lines.append("## Risks")
-        if not report.risks:
-            lines.append("- (none)")
-        else:
-            for r in report.risks:
-                lines.append(f"- {r}")
-        lines.append("")
-        lines.append("## Next actions (ordered)")
-        if not report.next_actions:
-            lines.append("- (none)")
-        else:
-            for a in report.next_actions:
-                lines.append(f"- {a}")
         lines.append("")
         return "\n".join(lines)
 
