@@ -1,38 +1,22 @@
-provider_id: generic_csv_v1
-description: Generic CSV auto-discovery mapping to canonical events.*
+provider: generic_csv
+version: 0.1.0
+
+# Bu mapping: CSV sütunlarını HP canonical alanlarına map eder.
+# Orchestrator/ingest katmanı bu sözlüğü kullanır.
 
 columns:
-  event_type:
-    aliases: [type, action, event]
-    target: events.event_type
-    required: true
+  player_id: [player_id, player, pid]
+  minutes: [minutes, mins, played_minutes]
 
-  x:
-    aliases: [x, pos_x, start_x]
-    target: events.start_x
-    required: false
+  xT: [xT, xt, xthreat, expected_threat]
+  ppda: [ppda, PPDA]
 
-  y:
-    aliases: [y, pos_y, start_y]
-    target: events.start_y
-    required: false
+  prog_carries_90: [prog_carries_90, progressive_carries_90, progressive_carries_p90]
+  line_break_passes_90: [line_break_passes_90, lb_passes_90, linebreaking_passes_90]
 
-  end_x:
-    aliases: [end_x, to_x, dest_x]
-    target: events.end_x
-    required: false
+  half_space_receives_90: [half_space_receives_90, half_space_receives, halfspace_receives_90]
+  turnover_danger_90: [turnover_danger_90, turnover_danger, loss_danger_90]
 
-  end_y:
-    aliases: [end_y, to_y, dest_y]
-    target: events.end_y
-    required: false
-
-  team_id:
-    aliases: [team, team_id]
-    target: events.team_id
-    required: true
-
-  player_id:
-    aliases: [player, player_id]
-    target: events.player_id
-    required: false
+  # spatial
+  x: [x, X, pos_x]
+  y: [y, Y, pos_y]
