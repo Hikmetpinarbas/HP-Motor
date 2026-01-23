@@ -1,0 +1,3 @@
+table:
+  table_id: role_fit_table
+  columns: [role, fit_score, strengths, risks, confidence]
