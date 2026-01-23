@@ -1,0 +1,15 @@
+plot:
+  plot_id: role_radar
+  type: radar
+  required_metrics:
+    - xt_value
+    - progressive_carries_90
+    - line_break_passes_90
+    - turnover_danger_index
+
+  legend:
+    always: [sample_minutes, source, uncertainty]
+  persona_variants:
+    analyst: { show_uncertainty: true, show_falsifiers: true }
+    coach:  { show_uncertainty: false, show_falsifiers: false }
+    scout:  { show_uncertainty: true, show_falsifiers: false }
