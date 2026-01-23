@@ -3,16 +3,21 @@ import pandas as pd
 import sys
 import os
 
-# 1. ADIM: Sistemin mevcut klasörü tanımasını sağlıyoruz
+# 1. ADIM: Sistemin mevcut klasörü (Root) tanımasını sağlıyoruz
+# Bu kısım ModuleNotFoundError hatasını çözen kritik kısımdır.
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-# 2. ADIM: Importlar (Bu aşamada hp_motor artık bir modül olarak tanınır)
-from hp_motor.pipelines.run_analysis import SovereignOrchestrator
-from hp_motor.agents.sovereign_agent import get_agent_verdict
+# 2. ADIM: Importlar (Klasör adı hp_motor ise çalışacaktır)
+try:
+    from hp_motor.pipelines.run_analysis import SovereignOrchestrator
+    from hp_motor.agents.sovereign_agent import get_agent_verdict
+except ModuleNotFoundError:
+    st.error("HATA: 'hp_motor' klasörü bulunamadı veya ismi hatalı (tire '-' yerine alt tire '_' olmalı).")
+    st.stop()
 
-# 3. ADIM: Arayüz Ayarları (Sadece bir kez yazılmalı)
+# 3. ADIM: Arayüz Ayarları
 st.set_page_config(page_title="HP MOTOR v5.0", layout="wide")
 st.markdown("<style>.main { background-color: #000000; color: #FFD700; }</style>", unsafe_allow_html=True)
 
@@ -31,7 +36,7 @@ uploaded_file = st.sidebar.file_uploader("Sinyal (CSV) Yükle", type=['csv'])
 persona = st.sidebar.selectbox("Persona", ["Match Analyst", "Scout", "Technical Director"])
 
 if uploaded_file:
-    # Veriyi oku (Ayraç ; ise ona göre ayarla)
+    # Veriyi oku
     df = pd.read_csv(uploaded_file, sep=';')
 
     with st.spinner("Analiz ediliyor..."):
