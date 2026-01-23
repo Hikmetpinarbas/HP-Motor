@@ -4,5 +4,4 @@ numpy
 pydantic
 matplotlib
 mplsoccer
-copilot
 openpyxl
