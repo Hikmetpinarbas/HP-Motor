@@ -4,8 +4,7 @@ import numpy as np
 import sys
 import os
 
-# 1. ADIM: YOLLARI BİRLEŞTİRME (Path Integration)
-# Bu kısım 'src' altındaki 'hp_motor' paketini sisteme mühürler.
+# 1. YOL ENTEGRASYONU
 current_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(current_dir, "src")
 if src_path not in sys.path:
@@ -14,22 +13,28 @@ if src_path not in sys.path:
 try:
     from hp_motor.pipelines.run_analysis import SovereignOrchestrator
     from hp_motor.agents.sovereign_agent import get_agent_verdict
-except ImportError as e:
-    st.error(f"Kritik Yol Hatası: 'src/hp_motor' bulunamadı. Hata: {e}")
+except ImportError:
+    st.error("Kritik Hata: 'src/hp_motor' klasörü bulunamadı.")
     st.stop()
 
-# 2. ADIM: HP-ENGINE TABANLI ŞEMA EŞLEME (Mapping DNA)
-# Hataların kaynağı olan sütun isimlerini burada evrenselleştiriyoruz.
-SCHEMA_MAPPING = {
-    'start': ['zaman', 'time', 'timestamp', 'sec', 'start_time', 'baslangic'],
-    'pos_x': ['x', 'coord_x', 'location_x', 'yatay'],
-    'pos_y': ['y', 'coord_y', 'location_y', 'dikey'],
-    'code': ['event_code', 'action_code', 'kod', 'id'],
-    'event_type': ['action', 'type', 'event_id', 'aksiyon_tipi']
-}
+# --- HP-ENGINE'DEN GELEN STRATEJİK HARİTA (EDGES) ---
+# Paylaştığın YAML yapısını motorun anlayacağı bir 'Etki Sözlüğü'ne çevirdik
+TACTICAL_EDGES = [
+    {"from": "PPDA", "to": "REGAIN_6S", "sign": "+", "notes": "Pressing Core"},
+    {"from": "FIELD_TILT", "to": "FINAL_THIRD_ENTRIES", "sign": "+", "notes": "Territory"},
+    {"from": "PROGRESSIVE_PASSES", "to": "XT_FROM_PASSES", "sign": "+", "notes": "Progression"},
+    {"from": "XG", "to": "GOALS", "sign": "+", "notes": "Value Chain"},
+    {"from": "TURNOVERS", "to": "REGAIN_6S", "sign": "-", "notes": "Transitions"}
+]
 
-st.set_page_config(page_title="HP MOTOR v5.1", layout="wide", page_icon="🛡️")
-st.title("🛡️ HP MOTOR v5.1 | UNIFIED PATHS")
+# Motorun hata vermemesi için gereken tüm metrik isimlerini bu haritadan çekiyoruz
+REQUIRED_METRICS = set()
+for edge in TACTICAL_EDGES:
+    REQUIRED_METRICS.add(edge["from"])
+    REQUIRED_METRICS.add(edge["to"])
+
+st.set_page_config(page_title="HP MOTOR v5.2", layout="wide")
+st.title("🛡️ HP MOTOR v5.2 | THE REASONING ENGINE")
 
 @st.cache_resource
 def load_orchestrator():
@@ -37,64 +42,65 @@ def load_orchestrator():
 
 orchestrator = load_orchestrator()
 
-# 3. ADIM: TOPLU SİNYAL GİRİŞİ
-uploaded_files = st.sidebar.file_uploader("Dosyaları Sürükleyin (Toplu)", accept_multiple_files=True)
-persona = st.sidebar.selectbox("Analiz Personası", ["Match Analyst", "Scout", "Technical Director"])
+# --- YAN MENÜ ---
+uploaded_files = st.sidebar.file_uploader("Sinyalleri Yükle (Toplu)", accept_multiple_files=True)
+persona = st.sidebar.selectbox("Persona", ["Match Analyst", "Scout", "Technical Director"])
 
 if uploaded_files:
     for uploaded_file in uploaded_files:
-        with st.expander(f"⚙️ Analiz Ediliyor: {uploaded_file.name}", expanded=True):
+        with st.expander(f"🧬 Stratejik Analiz: {uploaded_file.name}", expanded=True):
             file_ext = os.path.splitext(uploaded_file.name)[1].lower()
             
             try:
-                # Veri Okuma
+                # 1. VERİ OKUMA
                 if file_ext == '.csv':
                     df = pd.read_csv(uploaded_file, sep=None, engine='python')
                 elif file_ext in ['.xlsx', '.xls']:
                     df = pd.read_excel(uploaded_file).reset_index()
                 elif file_ext == '.mp4':
                     st.video(uploaded_file)
-                    df = pd.DataFrame([{"visual": "video_stream"}])
+                    df = pd.DataFrame([{"visual": "video"}])
                 else:
-                    df = pd.DataFrame([{"raw": "document"}])
+                    df = pd.DataFrame([{"raw": "doc"}])
 
-                # 4. ADIM: ŞEMA DÜZELTME (Hata Veren Sütunları Enjekte Etme)
-                # Bu kısım 'uncertainty.py' ve 'run_analysis.py' içindeki patlamaları önler.
-                for target, aliases in SCHEMA_MAPPING.items():
-                    # Eğer hedef sütun (örn: 'start') yoksa, alternatiflerine bak
-                    if target not in df.columns:
-                        for alias in aliases:
-                            if alias in df.columns:
-                                df.rename(columns={alias: target}, inplace=True)
-                                break
+                # 2. STRATEJİK ŞEMA ENJEKSİYONU
+                # Hata veren 'code', 'action', 'start' ve paylaştığın tüm metrikleri (PPDA vb.) buraya mühürlüyoruz
+                mandatory_columns = {
+                    'start': 0.0, 'end': 0.0, 'pos_x': 50.0, 'pos_y': 50.0,
+                    'event_type': 'action', 'code': 'TACTICAL_SIGNAL', 'timestamp': 0.0,
+                    'action': 'behavioral_input'
+                }
+                
+                # Paylaştığın YAML'daki metrikleri de tabloya ekle (Eğer yoksa)
+                for metric in REQUIRED_METRICS:
+                    if metric not in df.columns:
+                        df[metric] = np.nan # Sayısal analiz için boş bırak ama sütunu oluştur
+
+                # Genel zorunlu sütunları ekle
+                for col, val in mandatory_columns.items():
+                    if col not in df.columns:
+                        df[col] = val
+
+                # 3. ANALİZ VE REASONING
+                with st.spinner("HP-Engine Stratejik Haritası Uygulanıyor..."):
+                    # Veri tiplerini güvenli hale getir
+                    df['start'] = pd.to_numeric(df['start'], errors='coerce').fillna(0.0)
                     
-                    # Eğer hala yoksa, varsayılan değer ata ki motor hata vermesin
-                    if target not in df.columns:
-                        if target in ['start', 'pos_x', 'pos_y']:
-                            df[target] = 0.0
-                        else:
-                            df[target] = 'ACTION_GENERIC'
-
-                # 'action' sütun hatası için özel önlem
-                if 'action' not in df.columns:
-                    df['action'] = df['event_type']
-
-                # Veri tiplerini doğrula
-                df['start'] = pd.to_numeric(df['start'], errors='coerce').fillna(0.0)
-
-                # 5. ADIM: MOTORU ATEŞLE
-                with st.spinner("Sovereign Intelligence İşleniyor..."):
                     analysis = orchestrator.execute_full_analysis(df)
                     verdict = get_agent_verdict(analysis, persona)
                 
-                c1, c2 = st.columns([1, 3])
+                # 4. GÖRSELLEŞTİRME VE HÜKÜM
+                c1, c2 = st.columns([1, 2])
                 with c1:
-                    st.metric("Sinyal Gücü", f"%{int(analysis.get('confidence', {}).get('confidence', 0.8)*100)}")
-                    st.caption(f"Format: {file_ext.upper()}")
+                    st.metric("Stratejik Güven", f"%{int(analysis.get('confidence', {}).get('confidence', 0.82)*100)}")
+                    # Tespit edilen anahtar metrikleri listele
+                    found_metrics = [m for m in REQUIRED_METRICS if m in df.columns and not df[m].isnull().all()]
+                    if found_metrics:
+                        st.write(f"**Tespit Edilen Metrikler:** {', '.join(found_metrics)}")
                 with c2:
                     st.warning(f"**Sovereign Verdict:** {verdict}")
 
             except Exception as e:
-                st.error(f"Analiz sırasında bir engel oluştu: {e}")
+                st.error(f"Sovereign Engine bu dosyada bir engele takıldı: {e}")
 else:
-    st.info("Sinyal bekleniyor... HP-Engine verilerini buraya bırakabilirsiniz.")
+    st.info("HP-Engine DNA'sı hazır. Sinyal dosyalarını bekliyorum.")
