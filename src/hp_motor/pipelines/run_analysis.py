@@ -15,10 +15,10 @@ from hp_motor.viz.list_factory import ListFactory
 
 class SovereignOrchestrator:
     """
-    v1.0: Tek bir analysis object (player_role_fit) üzerinden:
-      - canonical mapping (provider yaml)
-      - metric compute (baseline + cognitive + biomechanics)
-      - evidence_graph stub
+    v1.1: player_role_fit (tek AO) ile:
+      - mapping
+      - metric compute (core + cognitive + biomechanics)
+      - evidence_graph
       - deliverables (tables/lists/figures)
     """
 
@@ -41,15 +41,19 @@ class SovereignOrchestrator:
         entity_id: str = "entity",
         role: str = "Mezzala",
         phase: str = "ACTION_GENERIC",
+        provider_hint: Optional[str] = None,
     ) -> Dict[str, Any]:
+
         ao = self._load_analysis_object(analysis_object_id)
 
-        provider = self._choose_provider(raw_df)
+        provider = provider_hint or self._choose_provider(raw_df)
         col_map = self._load_mapping(provider)
 
         canonical_df, mapping_report = self._apply_mapping(raw_df, col_map)
 
-        metric_values, missing = self._compute_player_role_fit_metrics(canonical_df, entity_id=entity_id, role=role)
+        metric_values, missing = self._compute_player_role_fit_metrics(
+            canonical_df, entity_id=entity_id, role=role
+        )
 
         evidence_graph = self._build_evidence_graph(metric_values, missing, ao)
 
@@ -61,7 +65,7 @@ class SovereignOrchestrator:
             theme=self.renderer.theme,
             sample_minutes=sample_minutes,
             source=provider,
-            uncertainty=None
+            uncertainty=None,
         )
 
         figures: Dict[str, Any] = {}
@@ -71,16 +75,15 @@ class SovereignOrchestrator:
                 continue
             figures[pid] = self.renderer.render(spec, canonical_df, metric_map, ctx)
 
+        # Tables / Lists (always present)
         tables = {
-            "evidence_table": self.tf.build_evidence_table(metric_values),
+            "evidence_table": self.tf.build_evidence_table(metric_values, evidence_graph),
             "role_fit_table": self.tf.build_role_fit_table(
                 role=role,
-                fit_score=None,
-                strengths=[],
-                risks=[],
+                metric_map=metric_map,
                 confidence=evidence_graph.get("overall_confidence", "medium"),
             ),
-            "risk_uncertainty_table": self.tf.build_risk_uncertainty_table(evidence_graph, missing),
+            "risk_uncertainty_table": self.tf.build_risk_uncertainty_table(missing, evidence_graph),
         }
 
         lists = {
@@ -89,7 +92,6 @@ class SovereignOrchestrator:
             "top_turnovers": self.lf.top_turnovers_by_danger(canonical_df),
         }
 
-        # Return
         return {
             "status": "OK",
             "analysis_object_id": analysis_object_id,
@@ -98,13 +100,11 @@ class SovereignOrchestrator:
             "provider": provider,
             "mapping_report": mapping_report,
             "missing_metrics": missing,
-            "metrics": [asdict(m) for m in metric_values],
+            "metrics": [m.model_dump() if hasattr(m, "model_dump") else asdict(m) for m in metric_values],
             "evidence_graph": evidence_graph,
-
-            # deliverables
             "deliverables": ao.get("deliverables", {}),
             "figures": list(figures.keys()),
-            "figure_objects": figures,  # Streamlit runtime object (matplotlib figs)
+            "figure_objects": figures,  # Streamlit runtime figures
             "tables": {k: v.to_dict(orient="records") for k, v in tables.items()},
             "lists": lists,
         }
@@ -117,19 +117,15 @@ class SovereignOrchestrator:
         if not os.path.exists(path):
             raise FileNotFoundError(f"analysis_object not found: {path}")
         with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+            return yaml.safe_load(f) or {}
 
     def _choose_provider(self, df: pd.DataFrame) -> str:
-        # v1 heuristic: XML often comes pre-flattened; treat by column patterns
-        cols = set([c.lower() for c in df.columns])
-        if "xT".lower() in cols or "xt".lower() in cols:
-            return "generic_csv"
+        # v1 heuristic: keep generic; app can pass provider_hint later if needed
         return "generic_csv"
 
     def _load_mapping(self, provider: str) -> Dict[str, str]:
         path = os.path.join(self.map_dir, f"provider_{provider}.yaml")
         if not os.path.exists(path):
-            # If missing, identity mapping
             return {}
         with open(path, "r", encoding="utf-8") as f:
             y = yaml.safe_load(f) or {}
@@ -143,18 +139,17 @@ class SovereignOrchestrator:
         mapped = 0
         warnings = []
 
-        # Map source->canonical if present
         for src, canon in col_map.items():
             if src in out.columns and canon not in out.columns:
                 out.rename(columns={src: canon}, inplace=True)
                 mapped += 1
 
-        # warn if required canonical keys missing (not fail)
-        for canon_need in ["player_id", "minutes", "xt_value", "ppda"]:
+        # soft warnings
+        for canon_need in ["player_id", "minutes"]:
             if canon_need not in out.columns:
                 warnings.append(f"Missing canonical column: {canon_need}")
 
-        return out, {"provider": "mapped", "mapped": mapped, "warnings": warnings}
+        return out, {"provider": provider_name(col_map), "mapped": mapped, "warnings": warnings}
 
     # -------------------------
     # Metric compute
@@ -171,39 +166,43 @@ class SovereignOrchestrator:
         missing: List[str] = []
         out: List[MetricValue] = []
 
-        # Filter entity if available
+        df_e = df.copy()
         if "player_id" in df.columns:
-            df_e = df[df["player_id"].astype(str) == str(entity_id)].copy()
-            if df_e.empty:
-                df_e = df.copy()
-        else:
-            df_e = df.copy()
+            tmp = df[df["player_id"].astype(str) == str(entity_id)].copy()
+            if not tmp.empty:
+                df_e = tmp
 
-        # Sample size
         minutes = self._safe_mean(df_e, "minutes")
 
-        # Core metrics (v1)
-        xt = None
-        # accept common naming: xT -> xt_value
-        if "xt_value" in df_e.columns:
-            xt = self._safe_mean(df_e, "xt_value")
-        elif "xT" in df_e.columns:
+        # core metrics
+        xt = self._safe_mean(df_e, "xt_value")
+        if xt is None and "xT" in df_e.columns:
             xt = self._safe_mean(df_e, "xT")
 
         ppda = self._safe_mean(df_e, "ppda")
         prog = self._safe_mean(df_e, "progressive_carries_90")
         lbreak = self._safe_mean(df_e, "line_break_passes_90")
         hs = self._safe_mean(df_e, "half_space_receives")
+
         tdi = self._safe_mean(df_e, "turnover_danger_index")
         if tdi is None:
             tdi = self._safe_mean(df_e, "turnover_danger_90")
 
-        # Push metric values
-        def add(metric_id: str, value: Optional[float]):
+        def add(metric_id: str, value: Optional[float], unit: Optional[str] = None, source: str = "raw_df"):
             if value is None:
                 missing.append(metric_id)
                 return
-            out.append(MetricValue(metric_id=metric_id, value=float(value), sample_size=minutes, unit=None, source="raw_df"))
+            out.append(
+                MetricValue(
+                    metric_id=metric_id,
+                    entity_type="player",
+                    entity_id=str(entity_id),
+                    value=float(value),
+                    unit=unit,
+                    sample_size=minutes,
+                    source=source,
+                )
+            )
 
         add("xt_value", xt)
         add("ppda", ppda)
@@ -212,61 +211,35 @@ class SovereignOrchestrator:
         add("line_break_passes_90", lbreak)
         add("half_space_receives", hs)
 
-        # ---- Cognitive signals (if columns exist)
+        # cognitive (if available)
         cog = extract_cognitive_signals(df_e)
-        if cog.decision_speed_mean_s is not None:
-            out.append(MetricValue("decision_speed_mean_s", float(cog.decision_speed_mean_s), minutes, "s", "raw_df"))
-        else:
-            missing.append("decision_speed_mean_s")
+        add("decision_speed_mean_s", cog.decision_speed_mean_s, unit="s")
+        add("scan_freq_10s", cog.scan_freq_10s, unit="per_s")
+        add("contextual_awareness_score", cog.contextual_awareness_score, unit="0_1")
 
-        if cog.scan_freq_10s is not None:
-            out.append(MetricValue("scan_freq_10s", float(cog.scan_freq_10s), minutes, "per_s", "raw_df"))
-        else:
-            missing.append("scan_freq_10s")
-
-        if cog.contextual_awareness_score is not None:
-            out.append(MetricValue("contextual_awareness_score", float(cog.contextual_awareness_score), minutes, "0_1", "raw_df"))
-        else:
-            missing.append("contextual_awareness_score")
-
-        # ---- Orientation / biomechanics signals (if columns exist)
+        # biomechanics / orientation (if available)
         ori = extract_orientation_signals(df_e)
-        if ori.defender_side_on_score is not None:
-            out.append(MetricValue("defender_side_on_score", float(ori.defender_side_on_score), minutes, "0_1", "raw_df"))
-        else:
-            missing.append("defender_side_on_score")
+        add("defender_side_on_score", ori.defender_side_on_score, unit="0_1")
+        add("square_on_rate", ori.square_on_rate, unit="0_1")
+        add("channeling_to_wing_rate", ori.channeling_to_wing_rate, unit="0_1")
 
-        if ori.square_on_rate is not None:
-            out.append(MetricValue("square_on_rate", float(ori.square_on_rate), minutes, "0_1", "raw_df"))
-        else:
-            missing.append("square_on_rate")
-
-        if ori.channeling_to_wing_rate is not None:
-            out.append(MetricValue("channeling_to_wing_rate", float(ori.channeling_to_wing_rate), minutes, "0_1", "raw_df"))
-
-        # v1 placeholder (still required in analysis_object yaml)
-        # We keep it always present but neutral to avoid fail_closed at UI level.
-        out.append(MetricValue("role_benchmark_percentiles", 0.0, minutes, "stub", "engine"))
-
-        # Deduplicate missing
+        # dedupe missing
         missing = sorted(list(set(missing)))
         return out, missing
 
     def _build_evidence_graph(self, metric_values: List[MetricValue], missing: List[str], ao: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        v1 evidence: confidence is a function of missing required metrics.
-        """
         required = ao.get("deliverables", {}).get("required_metrics", []) or []
         missing_required = [m for m in missing if m in required]
 
-        if len(missing_required) == 0:
+        if len(required) == 0:
+            overall = "medium"
+        elif len(missing_required) == 0:
             overall = "high"
         elif len(missing_required) <= max(1, len(required) // 3):
             overall = "medium"
         else:
             overall = "low"
 
-        # minimal, machine-readable
         return {
             "overall_confidence": overall,
             "missing_required": missing_required,
@@ -275,7 +248,7 @@ class SovereignOrchestrator:
         }
 
     # -------------------------
-    # Minimal plot spec map (v1)
+    # Minimal plot specs (v1)
     # -------------------------
     def _minimal_plot_spec(self, pid: str) -> Optional[Dict[str, Any]]:
         if pid == "risk_scatter":
@@ -284,10 +257,21 @@ class SovereignOrchestrator:
             return {
                 "plot_id": pid,
                 "type": "radar",
-                "required_metrics": ["xt_value", "progressive_carries_90", "line_break_passes_90", "turnover_danger_index", "contextual_awareness_score"],
+                "required_metrics": [
+                    "xt_value",
+                    "progressive_carries_90",
+                    "line_break_passes_90",
+                    "turnover_danger_index",
+                    "contextual_awareness_score",
+                ],
             }
         if pid == "half_space_touchmap":
             return {"plot_id": pid, "type": "pitch_heatmap"}
         if pid == "xt_zone_overlay":
             return {"plot_id": pid, "type": "pitch_overlay"}
         return None
+
+
+def provider_name(col_map: Dict[str, str]) -> str:
+    # small helper: keep mapping_report readable
+    return "mapped" if col_map else "identity"
