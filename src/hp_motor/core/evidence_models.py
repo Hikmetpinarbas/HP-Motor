@@ -1,39 +1,51 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Literal, Optional
 
 
-class EvidenceNode(BaseModel):
-    node_id: str
-    metric_id: str
-    value: Optional[float] = None
-    source: str = "unknown"
-    note: Optional[str] = None
+ConfidenceLevel = Literal["low", "medium", "high"]
 
 
-class EvidenceEdge(BaseModel):
-    from_node: str
-    to_node: str
-    relation: Literal["supports", "contradicts", "depends_on", "derived_from"] = "supports"
-    strength: float = Field(0.5, ge=0.0, le=1.0)
-    rationale: Optional[str] = None
-
-
-class Hypothesis(BaseModel):
+@dataclass
+class Hypothesis:
     """
-    Popper uyumlu: yanlışlanabilir, net iddia.
-    v1: minimal şema (ileride test/threshold bağları eklenecek).
+    Popper-Gate / Evidence Graph tarafında kullanılacak temel hipotez modeli.
     """
-    hypothesis_id: str
-    statement: str
-    falsifiable: bool = True
-    tests: List[Dict[str, Any]] = Field(default_factory=list)
+    id: str
+    claim: str
+    confidence: ConfidenceLevel = "medium"
+    supporting: List[str] = field(default_factory=list)
+    contradicting: List[str] = field(default_factory=list)
+    notes: Optional[str] = None
 
 
-class EvidenceGraph(BaseModel):
-    overall_confidence: Literal["low", "medium", "high"] = "medium"
-    nodes: List[EvidenceNode] = Field(default_factory=list)
-    edges: List[EvidenceEdge] = Field(default_factory=list)
-    hypotheses: List[Hypothesis] = Field(default_factory=list)
-    missing_required: List[str] = Field(default_factory=list)
+@dataclass
+class EvidenceItem:
+    """
+    Kanıt kayıtları (metrik, kural, gözlem).
+    """
+    id: str
+    kind: Literal["metric", "rule", "observation", "data_quality"] = "metric"
+    title: str = ""
+    payload: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class EvidenceGraph:
+    """
+    Sistemin “neden” katmanı: supporting/contradicting kanıtları bir arada taşır.
+    """
+    overall_confidence: ConfidenceLevel = "medium"
+    items: List[EvidenceItem] = field(default_factory=list)
+    hypotheses: List[Hypothesis] = field(default_factory=list)
+
+
+@dataclass
+class RawArtifact:
+    """
+    Orchestrator’ın beslendiği ham paket.
+    df = event/tablo temsili; meta = dosya ve bağlam.
+    """
+    df: Any
+    meta: Dict[str, Any] = field(default_factory=dict)
