@@ -1,23 +1,69 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
 import pandas as pd
 
-class HPTableFactory:
-    """v5.0 Table Generation - The Clinical Data Standard."""
-    def create_evidence_table(self, nodes: list):
-        """Metrik | Değer | Örneklem | Güven | Kaynak"""
-        data = []
-        for node in nodes:
-            data.append({
-                "Metrik": node.metric_name,
-                "Değer": node.value,
-                "Örneklem (n)": node.sample_size,
-                "Güven (%)": f"{node.confidence_score * 100}%",
-                "Kaynak": node.source
-            })
-        return pd.DataFrame(data)
+from hp_motor.core.cdl_models import MetricValue
+from hp_motor.core.evidence_models import EvidenceGraph
 
-    def create_risk_table(self, player_id, loops_count):
+
+class TableFactory:
+    def build_evidence_table(self, metrics: List[MetricValue]) -> pd.DataFrame:
+        rows: List[Dict[str, Any]] = []
+        for mv in metrics:
+            rows.append({
+                "metric": mv.metric_id,
+                "value": mv.value,
+                "percentile": None,  # v1.1 norms
+                "scope": mv.scope,
+                "sample": mv.sample_size,
+                "source": mv.source,
+                "uncertainty": mv.uncertainty,
+            })
+        return pd.DataFrame(rows)
+
+    def build_role_fit_table(
+        self,
+        role: str,
+        fit_score: Optional[float],
+        strengths: List[str],
+        risks: List[str],
+        confidence: str,
+    ) -> pd.DataFrame:
         return pd.DataFrame([{
-            "Oyuncu": player_id,
-            "Travma Döngüsü": loops_count,
-            "Risk Durumu": "YÜKSEK" if loops_count > 5 else "STABİL"
+            "role": role,
+            "fit_score": fit_score,
+            "strengths": ", ".join(strengths) if strengths else "",
+            "risks": ", ".join(risks) if risks else "",
+            "confidence": confidence,
         }])
+
+    def build_risk_uncertainty_table(self, evidence_graph: EvidenceGraph, missing_metrics: List[str]) -> pd.DataFrame:
+        findings = []
+        if missing_metrics:
+            findings.append({
+                "finding": "Missing metrics reduce confidence",
+                "data_risk": "medium",
+                "model_risk": "low",
+                "why": f"Missing: {', '.join(missing_metrics[:8])}" + ("..." if len(missing_metrics) > 8 else ""),
+                "mitigation": "Provide event/tracking fields; or enable proxies with explicit uncertainty.",
+            })
+        # contradictions in v1.5; placeholder now
+        if evidence_graph.contradictions:
+            findings.append({
+                "finding": "Conflicting evidence detected",
+                "data_risk": "low",
+                "model_risk": "medium",
+                "why": f"{len(evidence_graph.contradictions)} contradictions present",
+                "mitigation": "Review alternative explanations (ACM∞) and increase axes for triangulation.",
+            })
+        if not findings:
+            findings.append({
+                "finding": "No major risks flagged (v1.0)",
+                "data_risk": "low",
+                "model_risk": "low",
+                "why": "Sufficient metrics present for minimal triangulation",
+                "mitigation": "Add benchmarks (norms) for stronger claims.",
+            })
+        return pd.DataFrame(findings)
