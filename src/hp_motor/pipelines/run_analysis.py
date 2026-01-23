@@ -20,25 +20,11 @@ ANALYSIS_DIR = Path(__file__).resolve().parent / "analysis_objects"
 
 
 class SovereignOrchestrator:
-    """
-    v1.0 Orchestrator:
-      - Loads Analysis Object YAML
-      - Computes metric_bundle (minimal column mapping)
-      - Builds EvidenceGraph (minimal)
-      - Renders figures (matplotlib/mplsoccer)
-      - Builds tables (pandas)
-      - Builds lists (python list[dict])
-    """
-
     def __init__(self, registry_path: Path = REG_PATH):
         with registry_path.open("r", encoding="utf-8") as f:
             self.registry = yaml.safe_load(f)["registry"]
 
     def _load_analysis_object(self, analysis_object_id: str) -> Dict[str, Any]:
-        """
-        analysis_object_id: file stem under analysis_objects/
-          example: "player_role_fit" => analysis_objects/player_role_fit.yaml
-        """
         path = ANALYSIS_DIR / f"{analysis_object_id}.yaml"
         if not path.exists():
             raise FileNotFoundError(f"Analysis object not found: {path}")
@@ -60,7 +46,6 @@ class SovereignOrchestrator:
             registry_version=self.registry.get("version", "unknown"),
         )
 
-        # 1) Metrics
         metric_values: List[MetricValue] = []
         missing: List[str] = []
 
@@ -72,7 +57,6 @@ class SovereignOrchestrator:
             else:
                 metric_values.append(mv)
 
-        # Fail-closed minimal
         if ao.get("evidence_policy", {}).get("fail_closed", True) and len(metric_values) < 2:
             return {
                 "status": "UNKNOWN",
@@ -81,10 +65,8 @@ class SovereignOrchestrator:
                 "analysis_object": ao,
             }
 
-        # 2) Evidence Graph (v1.0 minimal)
         eg = self._build_evidence_graph(metric_values, role)
 
-        # 3) Renderables (Figures / Tables / Lists)
         metric_map = {m.metric_id: m.value for m in metric_values}
         sample_minutes = next((m.sample_size for m in metric_values if m.sample_size is not None), None)
 
@@ -98,7 +80,6 @@ class SovereignOrchestrator:
 
         figures: Dict[str, Any] = {}
         for pid in ao.get("deliverables", {}).get("plots", []):
-            # v1.0: plot specs inline (v1.1: spec loader)
             if pid == "risk_scatter":
                 spec = {"plot_id": pid, "type": "scatter", "axes": {"x": "xt_value", "y": "turnover_danger_index"}}
             elif pid == "role_radar":
@@ -112,7 +93,6 @@ class SovereignOrchestrator:
             elif pid == "xt_zone_overlay":
                 spec = {"plot_id": pid, "type": "pitch_overlay"}
             else:
-                # unknown plot id -> skip
                 continue
 
             figures[pid] = renderer.render(spec, raw_df, metric_map, ctx)
@@ -137,9 +117,6 @@ class SovereignOrchestrator:
             "top_turnovers": lf.top_turnovers_by_danger(raw_df),
         }
 
-        # IMPORTANT:
-        # - For Streamlit, returning the figure objects is useful (st.pyplot(fig)).
-        # - For API/JSON, you can store figure keys only; here we return BOTH.
         return {
             "status": "OK",
             "analysis_object": ao,
@@ -148,17 +125,13 @@ class SovereignOrchestrator:
             "evidence_graph": eg.model_dump(),
             "deliverables": ao.get("deliverables", {}),
             "provenance": prov.__dict__,
-            # Renderables
-            "figure_objects": figures,  # Streamlit can use these directly
-            "figures": list(figures.keys()),  # easy logging
+            "figure_objects": figures,
+            "figures": list(figures.keys()),
             "tables": {k: v.to_dict(orient="records") for k, v in tables.items()},
             "lists": lists,
         }
 
     def _compute_metric(self, metric_id: str, df: pd.DataFrame, entity_id: str) -> Optional[MetricValue]:
-        """
-        v1.0 minimal column mapping. You can adapt col_map to your real CSV schema.
-        """
         col_map = {
             "ppda": "ppda",
             "xt_value": "xT",
@@ -166,7 +139,7 @@ class SovereignOrchestrator:
             "line_break_passes_90": "line_break_passes_90",
             "half_space_receives": "half_space_receives_90",
             "turnover_danger_index": "turnover_danger_90",
-            "role_benchmark_percentiles": None,  # v1.1 norms
+            "role_benchmark_percentiles": None,
         }
 
         col = col_map.get(metric_id, None)
@@ -175,7 +148,6 @@ class SovereignOrchestrator:
         if col not in df.columns:
             return None
 
-        # Filter for entity if player_id exists
         if "player_id" in df.columns:
             sdf = df[df["player_id"] == entity_id]
         else:
@@ -200,9 +172,6 @@ class SovereignOrchestrator:
         )
 
     def _build_evidence_graph(self, metrics: List[MetricValue], role: str) -> EvidenceGraph:
-        """
-        v1.0 minimal evidence: 1 hypothesis + metric nodes.
-        """
         h1 = Hypothesis(
             hypothesis_id="H1_role_fit",
             claim=f"{role} rol uyumu yüksek.",
