@@ -5,6 +5,7 @@ from src.hp_motor.engine.compute.temporal import TemporalEngine
 from src.hp_motor.engine.compute.behavioral import BehavioralEngine
 
 class SovereignOrchestrator:
+    """HP Motor v5.0'ın tüm parçalarını birbirine bağlayan merkez."""
     def __init__(self):
         self.uncertainty = UncertaintyEngine()
         self.cognitive = CognitiveEngine()
