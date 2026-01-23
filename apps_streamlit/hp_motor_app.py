@@ -5,12 +5,12 @@ from src.hp_motor.viz.table_factory import HPTableFactory
 from src.hp_motor.core.cdl_models import EvidenceNode
 from src.hp_motor.agents.sovereign_agent import get_agent_verdict
 
-# --- TASARIM FELSEFESİ (Caravaggio + Tesla) ---
+# --- TASARIM: CARAVAGGIO + TESLA ---
 st.set_page_config(page_title="HP MOTOR v5.0", layout="wide")
 st.markdown("<style>.main { background-color: #000000; color: #FFD700; }</style>", unsafe_allow_html=True)
 
 st.title("🛡️ HP MOTOR v5.0 | SOVEREIGN AGENT")
-st.caption("Felsefe: Saper Vedere | Güç: GitHub Copilot SDK v2026")
+st.caption("Felsefe: Saper Vedere | Estetik: Tenebrism | Güç: GitHub Copilot SDK")
 
 # --- INITIALIZATION ---
 orchestrator = SovereignOrchestrator()
@@ -26,7 +26,7 @@ if uploaded_file:
     # 1. ANALİZİ ÇALIŞTIR
     with st.spinner("Sovereign Intelligence İşleniyor..."):
         analysis = orchestrator.execute_full_analysis(df)
-        # AJANIN HÜKMÜ (Verdict)
+        # AJANIN HÜKMÜ (Copilot SDK Layer)
         verdict = get_agent_verdict(analysis, persona)
     
     # 2. SONUÇLARI GÖSTER
@@ -37,7 +37,7 @@ if uploaded_file:
         st.subheader(f"🏟️ {persona} Görünümü")
         node = EvidenceNode(
             metric_id="cog_speed",
-            metric_name="Karar Hızı (Jordet)",
+            metric_name="Bilişsel Hız (Jordet)",
             value=round(analysis['cognitive_speed'].mean(), 2) if not analysis['cognitive_speed'].empty else 0,
             sample_size=len(df),
             source="Event Data",
@@ -47,8 +47,8 @@ if uploaded_file:
         st.table(table_factory.create_evidence_table([node]))
     
     with col2:
-        st.subheader("🤖 Agent Verdict (Copilot SDK)")
-        st.warning(f"**Karar:** {verdict}")
+        st.subheader("🤖 Sovereign Agent Verdict")
+        st.warning(f"**Hüküm:** {verdict}")
         
         if persona == "Scout":
             st.subheader("⚠️ Risk Paneli")
