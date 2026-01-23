@@ -20,12 +20,7 @@ jobs:
           pip install pandas numpy pydantic matplotlib seaborn pyyaml mplsoccer
 
       - name: Set PYTHONPATH
-        run: |
-          echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
+        run: echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
 
       - name: Smoke Import Test
-        run: |
-          python - <<EOF
-          from hp_motor.pipelines.run_analysis import SovereignOrchestrator
-          print("IMPORT OK")
-          EOF 
+        run: python -c "from hp_motor.pipelines.run_analysis import SovereignOrchestrator; print('IMPORT OK')"
