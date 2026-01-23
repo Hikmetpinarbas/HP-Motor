@@ -51,4 +51,63 @@ class SOTValidator:
             return self._finalize(report, issues)
 
         if df.empty:
-            if self.allow_empty
+            if self.allow_empty:
+                issues.append(ValidationIssue("DF_EMPTY", "Input dataframe is empty (allowed)", "WARN"))
+            else:
+                issues.append(ValidationIssue("DF_EMPTY", "Input dataframe is empty", "ERROR"))
+            return self._finalize(report, issues)
+
+        # Required columns presence
+        missing = [c for c in self.required_columns if c not in df.columns]
+        report["missing_required"] = missing
+        if missing:
+            issues.append(
+                ValidationIssue(
+                    "MISSING_REQUIRED",
+                    f"Missing required columns: {missing}",
+                    "ERROR",
+                )
+            )
+
+        # Null distribution report (do not drop!)
+        nulls = {}
+        for c in df.columns:
+            try:
+                nulls[c] = float(pd.to_numeric(df[c], errors="ignore").isna().mean())
+            except Exception:
+                nulls[c] = float(df[c].isna().mean())
+        report["null_report"] = nulls
+
+        # Coordinate bounds checks (if present)
+        xcol, ycol = self.coordinate_columns
+        if xcol in df.columns and ycol in df.columns:
+            x_min, x_max = self.coordinate_bounds[0]
+            y_min, y_max = self.coordinate_bounds[1]
+
+            x = pd.to_numeric(df[xcol], errors="coerce")
+            y = pd.to_numeric(df[ycol], errors="coerce")
+
+            oob_x = int(((x < x_min) | (x > x_max)).fillna(False).sum())
+            oob_y = int(((y < y_min) | (y > y_max)).fillna(False).sum())
+
+            report["bounds_report"] = {
+                "x_out_of_bounds": oob_x,
+                "y_out_of_bounds": oob_y,
+                "bounds": {"x": [x_min, x_max], "y": [y_min, y_max]},
+            }
+
+            if oob_x > 0 or oob_y > 0:
+                issues.append(
+                    ValidationIssue(
+                        "COORD_OOB",
+                        f"Coordinate out-of-bounds detected (x:{oob_x}, y:{oob_y}). Expected x∈[{x_min},{x_max}] y∈[{y_min},{y_max}]",
+                        "WARN",
+                    )
+                )
+
+        return self._finalize(report, issues)
+
+    def _finalize(self, report: Dict, issues: List[ValidationIssue]) -> Dict:
+        report["issues"] = [i.__dict__ for i in issues]
+        report["ok"] = not any(i.severity == "ERROR" for i in issues)
+        return report
