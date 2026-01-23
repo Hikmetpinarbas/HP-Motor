@@ -1,1 +1,1 @@
-python tools/copilot_sdk_agent/main.py validate
+python tools/copilot_sdk_agent/main.py validate 
