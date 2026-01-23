@@ -4,16 +4,10 @@ numpy
 pydantic
 matplotlib
 mplsoccer
-seaborn
 openpyxl
 pyyaml
-
-# robust ingestion
 lxml
 pypdf
 python-docx
 beautifulsoup4
 html5lib
-
-# opsiyonel (Copilot SDK kullanıyorsan)
-github-copilot-sdk
