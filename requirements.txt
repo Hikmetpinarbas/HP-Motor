@@ -4,5 +4,5 @@ numpy
 pydantic
 matplotlib
 mplsoccer
-github-copilot-sdk
+copilot
 openpyxl
