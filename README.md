@@ -8,5 +8,5 @@ Futbol analizinde "Sıfır Hata" ve "Maksimum Şeffaflık" prensibiyle kurgulanm
 3. **Registry-Driven:** Analiz mantığı kodun içinde değil, YAML tabanlı Registry dosyalarında yaşar.
 
 ## 🚀 Kurulum
-1. `pip install -r requirements.txt`
-2. `streamlit run streamlit_app.py`
+1. `pip install -e .`
+2. `streamlit run app.py`
