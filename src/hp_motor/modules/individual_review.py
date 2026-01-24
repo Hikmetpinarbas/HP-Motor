@@ -469,4 +469,141 @@ class IndividualAnalysisV22:
         if isinstance(upb, dict) and upb.get("value") and isinstance(upb["value"], dict):
             n = upb["value"].get("turnovers_under_pressure_proxy")
             if isinstance(n, int) and n >= 2:
-                not
+                notes.append("Baskı altında 2. opsiyon (duvar/istasyon) sağlayın; izolasyonu düşürün.")
+
+        # If half-space touches proxy exists, suggest usage
+        ez = tactical.get("efficient_zones", {})
+        if isinstance(ez, dict) and ez.get("value") and isinstance(ez["value"], dict):
+            hs = ez["value"].get("half_space_touch_proxy")
+            if isinstance(hs, int) and hs > 0:
+                notes.append("Half-space temasları üzerinden rol kurgulayın; iç koridor bağlantılarını güçlendirin.")
+
+        status = "OK" if notes else "DEGRADED"
+        return {
+            "status": status,
+            "note": "Derived from proxies when possible; otherwise requires analyst input.",
+            "how_to_use": FieldStatus(notes if notes else None, status, "Proxy-derived.").__dict__,
+            "how_not_to_use": FieldStatus(None, "ABSTAINED", "Needs tactical context.").__dict__,
+            "support_needs": FieldStatus(None, "ABSTAINED", "Needs team model.").__dict__,
+        }
+
+    def _risk_analysis(self, df: pd.DataFrame, tactical: Dict[str, Any], decision: Dict[str, Any], biomech: Dict[str, Any]) -> Dict[str, Any]:
+        risks: Dict[str, Any] = {"tactical": [], "physical": [], "psychological": []}
+
+        # Tactical risk: pressure turnovers proxy
+        upb = decision.get("under_pressure_behavior", {})
+        if isinstance(upb, dict) and upb.get("value") and isinstance(upb["value"], dict):
+            n = upb["value"].get("turnovers_under_pressure_proxy")
+            if isinstance(n, int) and n >= 3:
+                risks["tactical"].append("Baskı altında top kaybı riski yüksek (proxy). İzolasyon azaltılmalı.")
+
+        # Physical risk: cannot infer; keep abstained
+        # Psych risk: cannot infer; keep abstained
+
+        status = "DEGRADED" if any(risks[k] for k in risks) else "ABSTAINED"
+        return {
+            "status": status,
+            "note": "Tactical risks can be proxy-derived; physical/psych require external inputs.",
+            "tactical": FieldStatus(risks["tactical"] or None, status, "Proxy-derived.").__dict__,
+            "physical": FieldStatus(None, "ABSTAINED", "Requires load/injury data.").__dict__,
+            "psychological": FieldStatus(None, "ABSTAINED", "Requires observation.").__dict__,
+        }
+
+    def _system_fit_stub(self) -> Dict[str, Any]:
+        return {
+            "status": "ABSTAINED",
+            "note": "System fit requires team model + league baselines.",
+            "team_structure_fit_0_10": FieldStatus(None, "ABSTAINED", "Not available.").__dict__,
+            "league_fit_0_10": FieldStatus(None, "ABSTAINED", "Not available.").__dict__,
+            "coach_profile_fit": FieldStatus(None, "ABSTAINED", "Not available.").__dict__,
+        }
+
+    def _executive_summary(
+        self,
+        per90: Dict[str, Any],
+        decision: Dict[str, Any],
+        tactical: Dict[str, Any],
+        risk: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        # No hallucination: build a cautious summary only from available proxy signals
+        bullets: List[str] = []
+        if per90.get("metrics"):
+            m = per90["metrics"]
+            if m.get("dribble_success_pct_proxy") is not None:
+                bullets.append(f"Dripling başarı% (proxy): {m['dribble_success_pct_proxy']:.1f}")
+            if m.get("turnovers_per90_proxy") is not None:
+                bullets.append(f"Top kaybı (proxy) per90: {m['turnovers_per90_proxy']:.2f}")
+
+        proxies = decision.get("proxies", {})
+        if "decision_speed_sec_proxy" in proxies:
+            bullets.append(f"Karar hızı (proxy, sn): {proxies['decision_speed_sec_proxy']:.2f}")
+
+        if risk.get("tactical", {}).get("value"):
+            bullets.append("Taktik risk sinyali mevcut (proxy).")
+
+        status = "OK" if bullets else "ABSTAINED"
+        return FieldStatus(
+            "> " + (" | ".join(bullets) if bullets else ""),
+            status,
+            "Generated only from available proxies; otherwise abstained.",
+        ).__dict__
+
+    # ---------------------------
+    # Derived outputs
+    # ---------------------------
+    def _derive_scouting_card(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Derive a one-page scouting card from v22 analysis.
+        Strict: if missing, abstain; never invent.
+        """
+        pid = analysis.get("player_id", {}).get("value")
+        per90 = analysis.get("numerical_profile_per90", {})
+        metrics = per90.get("metrics", {}) if isinstance(per90, dict) else {}
+
+        one_liner = analysis.get("player_identity", {}).get("one_line_definition", {})
+        one_liner_text = one_liner.get("value") if isinstance(one_liner, dict) else None
+
+        core = {
+            "xg": metrics.get("xg_per90"),
+            "xa": metrics.get("xa_per90"),
+            "key_pass": metrics.get("key_passes_per90_proxy"),
+            "shots": metrics.get("shots_per90_proxy"),
+            "dribble_pct": metrics.get("dribble_success_pct_proxy"),
+            "turnovers": metrics.get("turnovers_per90_proxy"),
+        }
+
+        return {
+            "player_id": pid,
+            "one_liner_verdict": FieldStatus(one_liner_text, "DEGRADED" if one_liner_text is None else "OK",
+                                             "Provided by analyst or absent.").__dict__,
+            "numerical_core_per90": FieldStatus(core, "DEGRADED", "Mix of computed proxies + missing fields.").__dict__,
+            "profile_tags": FieldStatus(None, "ABSTAINED", "Requires archetype engine + zone standardization.").__dict__,
+            "usage_instructions": analysis.get("coaching_notes", {}).get("how_to_use", FieldStatus(None, "ABSTAINED", "").__dict__),
+            "dependencies_yes_no": FieldStatus(None, "ABSTAINED", "Requires team model / role graph.").__dict__,
+            "red_flags": analysis.get("risk_analysis", {}).get("tactical", FieldStatus(None, "ABSTAINED", "").__dict__),
+            "fit_scores": analysis.get("system_fit_score", {}),
+        }
+
+    def _derive_role_mismatch_alarm(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Provide checklist scaffold + data-driven hints where possible.
+        """
+        # Base checklist is human-answered; we only add trigger hints.
+        triggers: List[str] = []
+
+        upb = analysis.get("decision_tree", {}).get("under_pressure_behavior", {})
+        if isinstance(upb, dict) and upb.get("value") and isinstance(upb["value"], dict):
+            n = upb["value"].get("turnovers_under_pressure_proxy")
+            if isinstance(n, int) and n >= 3:
+                triggers.append("Baskı altında top kaybı artışı (proxy) → izolasyon/bağlantı alarmı.")
+
+        return {
+            "status": "DEGRADED" if triggers else "ABSTAINED",
+            "note": "Checklist answers require match plan + coach input. Engine adds only data-driven trigger hints.",
+            "trigger_hints": FieldStatus(triggers or None, "DEGRADED" if triggers else "ABSTAINED", "Proxy-derived.").__dict__,
+            "checklist": FieldStatus(
+                None,
+                "ABSTAINED",
+                "Use HP ENGINE v22.x Role Mismatch Alarm Checklist template (manual yes/no scoring).",
+            ).__dict__,
+        }
