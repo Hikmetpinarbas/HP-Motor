@@ -9,7 +9,7 @@ from pathlib import Path
 def _bootstrap_repo_root() -> Path:
     """
     Ensures repo root is importable when running as `python main.py ...`.
-    This keeps mobile/CI behavior deterministic without relying on an editable install.
+    Keeps behavior deterministic on CI and mobile without relying on editable installs.
     """
     repo_root = Path(__file__).resolve().parent
     if str(repo_root) not in sys.path:
