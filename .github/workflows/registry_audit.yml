@@ -31,6 +31,32 @@ jobs:
         run: |
           python -m tools.copilot_sdk_agent.main registry-audit
 
+      - name: Gate: fail only on status=FAIL
+        run: |
+          python - <<'PY'
+          import json
+          import glob
+          import os
+
+          files = glob.glob("reports/*.json")
+          if not files:
+              raise SystemExit("No reports/*.json produced by audit (this should not happen).")
+
+          # pick latest by mtime
+          latest = max(files, key=lambda p: os.path.getmtime(p))
+          with open(latest, "r", encoding="utf-8") as f:
+              report = json.load(f)
+
+          status = (report.get("status") or "").upper().strip()
+          summary = report.get("summary") or ""
+          print("Audit report:", latest)
+          print("Status:", status)
+          print("Summary:", summary)
+
+          if status == "FAIL":
+              raise SystemExit("Registry audit status=FAIL (blocking).")
+          PY
+
       - name: Upload audit reports (artifact)
         uses: actions/upload-artifact@v4
         with:
