@@ -206,4 +206,4 @@ class IndividualReviewEngine:
                 parts.append("karar hızı yavaş")
         if pressure_diag.get("pressure_column"):
             parts.append("baskı koşullu hız üretildi")
-        return " • ".join(parts)
+        return " • ".join(parts) 
