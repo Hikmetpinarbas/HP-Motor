@@ -1,0 +1,1 @@
+"""HP Motor optional modules (UI-facing entry points)."""
