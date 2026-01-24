@@ -18,10 +18,15 @@ dependencies = [
   "seaborn",
   "openpyxl",
   "pyyaml",
+  "lxml",
+  "pypdf",
+  "python-docx",
+  "beautifulsoup4",
+  "html5lib",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "rich"]
+dev = ["pytest", "rich", "pyyaml"]
 agent = ["github-copilot-sdk"]
 
 [tool.setuptools]
