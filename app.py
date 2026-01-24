@@ -69,7 +69,7 @@ st.caption(f"Satır: {len(df)} | Kolon: {len(df.columns)}")
 st.sidebar.divider()
 st.sidebar.header("Analiz Ayarları")
 phase = st.sidebar.selectbox("Phase", ["open_play", "set_piece", "transition"], index=0)
-role = st.sidebar.selectbox("Role", ["Mezzala", "Pivot", "Winger", "CB", "FB"], index=0)
+role = st.sidebar.selectbox("Rol", ["mezzala", "pivot", "winger_solver", "cb", "fb"], index=0)
 
 # ============================================================
 # MAIN ANALYSIS (SOVEREIGN PIPELINE)
@@ -84,24 +84,19 @@ except Exception as e:
     st.error(f"Sistemik analiz çalıştırılamadı: {e}")
     st.stop()
 
-# --- verdict header
 status = sovereign_output.get("status", "UNKNOWN")
 confidence = (sovereign_output.get("evidence_graph") or {}).get("overall_confidence", "unknown")
 st.subheader(f"Durum: {status} | Güven: {confidence}")
 
-# --- diagnostics
 with st.expander("Diagnostics (neden / sınırlar / kalite)", expanded=(status != "OK")):
     st.json(sovereign_output.get("diagnostics", {}))
 
-# --- evidence
 with st.expander("Evidence Graph (hüküm değil: gerekçe)", expanded=True):
     st.json(sovereign_output.get("evidence_graph", {}))
 
-# --- metrics
 st.subheader("Metrikler")
 st.dataframe(pd.DataFrame(sovereign_output.get("metrics", [])), use_container_width=True)
 
-# --- tables
 st.subheader("Tablolar")
 tables = sovereign_output.get("tables", {}) or {}
 if not tables:
@@ -114,17 +109,15 @@ else:
         except Exception:
             st.write(v)
 
-# --- lists
 st.subheader("Listeler / Bullet çıktılar")
-lists = sovereign_output.get("lists", {}) or {}
-if not lists:
+lists_out = sovereign_output.get("lists", {}) or {}
+if not lists_out:
     st.info("Liste üretilmedi.")
 else:
-    for k, v in lists.items():
+    for k, v in lists_out.items():
         st.markdown(f"**{k}**")
         st.write(v)
 
-# --- figures
 st.subheader("Figürler")
 figs = sovereign_output.get("figure_objects", {}) or {}
 if not figs:
@@ -138,16 +131,13 @@ else:
             st.write(fig)
 
 # ============================================================
-# INDIVIDUAL REVIEW MODULE
+# INDIVIDUAL REVIEW + ROLE MISMATCH ALARM
 # ============================================================
 st.divider()
-st.header("Bireysel İnceleme (Individual Review)")
+st.header("Bireysel İnceleme + Rol Uyumsuzluğu Alarmı (HP v22.x)")
 
 if "player_id" not in df.columns:
-    st.warning(
-        "Bu veri setinde 'player_id' sütunu yok.\n\n"
-        "Bireysel inceleme için player_id zorunludur."
-    )
+    st.warning("Bu veri setinde 'player_id' sütunu yok. Bireysel inceleme için player_id zorunludur.")
     st.stop()
 
 player_ids = sorted(df["player_id"].dropna().unique().tolist())
@@ -157,33 +147,74 @@ if len(player_ids) == 0:
 
 selected_player = st.selectbox("Oyuncu Seç (player_id)", player_ids)
 
-individual_engine = IndividualReviewEngine()
+st.subheader("Rol Uyumsuzluğu Checklist Girdileri (EVET/HAYIR)")
+st.caption("Bilinmiyorsa boş bırak: sistem konservatif (yarım risk) puanlar.")
+
+# 14 soru için checkbox (UI minimal; telefon dostu)
+# Not: checkbox true => EVET, false => HAYIR; boş bırakma için “BILINMIYOR” selectbox kullanıyoruz.
+def _ans(label: str, key: str) -> str:
+    return st.selectbox(label, ["BILINMIYOR", "EVET", "HAYIR"], index=0, key=key)
+
+alarm_answers = {
+    "q1": _ans("1) Birincil rol saha planında net mi?", "q1"),
+    "q2": _ans("2) Oyuncu çizgiye hapsediliyor mu?", "q2"),
+    "q3": _ans("3) Oyuncu izole 1v2–1v3'e itiliyor mu?", "q3"),
+    "q4": _ans("4) Top aldığı bölgeler verimli bölgeyle örtüşüyor mu?", "q4"),
+    "q5": _ans("5) Aynı koridorda duvar/istasyon var mı?", "q5"),
+    "q6": _ans("6) Overlap/underlap desteği planlı mı?", "q6"),
+    "q7": _ans("7) 9 numara pinning yapıyor mu?", "q7"),
+    "q8": _ans("8) Ters kanat arka direk koşusu var mı?", "q8"),
+    "q9": _ans("9) İlk 20 dk hedefli 3+ temas aldı mı?", "q9"),
+    "q10": _ans("10) Sürekli kapalı vücutla mı alıyor?", "q10"),
+    "q11": _ans("11) Aldığı anlarda ikinci opsiyon var mı?", "q11"),
+    "q12": _ans("12) Yük yönetimi planlı mı?", "q12"),
+    "q13": _ans("13) Temas yoğunluğu profile göre ayarlı mı?", "q13"),
+    "q14": _ans("14) Rol iletişimi/güven çerçevesi kuruldu mu?", "q14"),
+}
+
+st.subheader("Canlı Maç İçi Tetikleyiciler")
+st.caption("2+ tetikleyici görülürse alarm seviyesi bir kademe yükselir.")
+t0 = st.checkbox("10 dakikada 2+ kez 1v2/1v3'e zorlanıyor", value=False)
+t1 = st.checkbox("Top kaybı sonrası geri koşu/itiraz artıyor", value=False)
+t2 = st.checkbox("Her pozisyonda çizgiye sıkışma + geri pas zorunluluğu", value=False)
+t3 = st.checkbox("Duvar yokluğu: ters tarafa şişirme / düşük kaliteli şut", value=False)
+t4 = st.checkbox("Bek desteği yok; sürekli dur-kalk (yük artışı)", value=False)
+alarm_live = [t0, t1, t2, t3, t4]
+
+engine = IndividualReviewEngine()
 
 try:
-    profile = individual_engine.build_player_profile(
+    profile = engine.build_player_profile(
         df=df,
         player_id=int(selected_player),
+        role_id=role,
+        alarm_answers=alarm_answers,  # type: ignore
+        alarm_live_triggers=alarm_live,
     )
 except Exception as e:
     st.error(f"Bireysel analiz çalıştırılamadı: {e}")
     st.stop()
 
-st.subheader("Özet (Summary)")
+st.subheader("Bireysel Özet")
 st.json(profile.summary)
+
+with st.expander("Scouting Card (Auto / Conservative)", expanded=False):
+    st.markdown(profile.scouting_card_markdown)
+
+with st.expander("Rol Uyumsuzluğu Alarm Checklist (Markdown)", expanded=True):
+    st.markdown(profile.role_mismatch_alarm_markdown)
+
+with st.expander("Rol Uyumsuzluğu Alarm (Structured)", expanded=False):
+    st.json(profile.role_mismatch_alarm)
 
 with st.expander("Diagnostics", expanded=False):
     st.json(profile.diagnostics)
 
 st.subheader("Detaylı Metrikler")
-metrics_df = pd.DataFrame(profile.metrics)
-st.dataframe(metrics_df, use_container_width=True)
+st.dataframe(pd.DataFrame(profile.metrics), use_container_width=True)
 
 # ============================================================
 # FOOTER
 # ============================================================
 st.divider()
-st.caption(
-    "HP Motor — Veri yoksa susar. "
-    "Çelişki varsa uyarır. "
-    "Geometri bozuksa alarm verir."
-)
+st.caption("HP Motor — Veri yoksa susar. Çelişki varsa uyarır. Bağlam yanlışsa alarm verir.")
