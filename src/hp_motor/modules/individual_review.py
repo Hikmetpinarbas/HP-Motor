@@ -1,609 +1,442 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
+
 import pandas as pd
+
+from hp_motor.core.cognition import extract_cognitive_signals, extract_orientation_signals
+from hp_motor.core.template_renderer import TemplateRenderer
+from hp_motor.modules.role_mismatch_alarm import RoleMismatchAlarmEngine, Answer
 
 
 @dataclass
-class FieldStatus:
-    value: Any
-    status: str  # OK | DEGRADED | ABSTAINED
-    note: str
+class PlayerProfile:
+    player_id: int
+    summary: Dict[str, Any]
+    metrics: List[Dict[str, Any]]
+    diagnostics: Dict[str, Any]
+    # v22.x derived artifacts
+    player_analysis_markdown: str
+    scouting_card_markdown: str
+    role_mismatch_alarm_markdown: str
+    role_mismatch_alarm: Dict[str, Any]
 
 
-def _first_existing_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
-    for c in candidates:
-        if c in df.columns:
-            return c
-    return None
-
-
-def _safe_mean(series: pd.Series) -> Optional[float]:
-    s = pd.to_numeric(series, errors="coerce").dropna()
-    if s.empty:
-        return None
-    return float(s.mean())
-
-
-def _safe_pct(numer: float, denom: float) -> Optional[float]:
-    if denom <= 0:
-        return None
-    return float(numer / denom * 100.0)
-
-
-def _pick_time_col(df: pd.DataFrame) -> Optional[str]:
-    return _first_existing_col(df, ["timestamp", "time", "seconds", "sec", "ts"])
-
-
-def _pick_event_type_col(df: pd.DataFrame) -> Optional[str]:
-    return _first_existing_col(df, ["event_type", "type", "action", "event"])
-
-
-def _pick_outcome_col(df: pd.DataFrame) -> Optional[str]:
-    return _first_existing_col(df, ["outcome", "result", "success", "is_success"])
-
-
-def _as_bool_success(val: Any) -> Optional[bool]:
-    if val is None:
-        return None
-    if isinstance(val, bool):
-        return val
-    s = str(val).strip().lower()
-    if s in {"1", "true", "t", "yes", "y", "success", "successful", "won"}:
-        return True
-    if s in {"0", "false", "f", "no", "n", "fail", "failed", "unsuccessful", "lost"}:
-        return False
-    return None
-
-
-class IndividualAnalysisV22:
+class IndividualReviewEngine:
     """
-    HP ENGINE v22.x — canonical individual player analysis module.
+    HP ENGINE v22.x — Individual Review (core)
 
-    Policy:
-      - Never invent missing data.
-      - Each field carries status:
-          OK / DEGRADED / ABSTAINED
-      - Produces:
-          - individual analysis template dict
-          - derived scouting card dict
-          - derived role mismatch alarm checklist skeleton (data-driven parts if possible)
-
-    Data expectations (optional; best-effort):
-      - player_id
-      - event_type/type/action
-      - outcome/success
-      - timestamp/time/sec
-      - x,y (for zone heuristics)
-      - pressure (0/1 or numeric)
+    Contract:
+      - No fabricated numeric claims.
+      - Returns metrics + diagnostics.
+      - Derives downstream artifacts via canonical templates:
+          - Player Analysis v22 Markdown
+          - Scouting Card v22 Markdown
+          - Role Mismatch Alarm Markdown
     """
 
-    def __init__(self, engine_version: str = "HP ENGINE v22.x"):
-        self.engine_version = engine_version
+    ENGINE_VERSION = "HP ENGINE v22.x"
 
-    # ---------------------------
-    # Public API
-    # ---------------------------
-    def generate_for_player(
+    def __init__(self) -> None:
+        self.alarm_engine = RoleMismatchAlarmEngine()
+        self.renderer = TemplateRenderer()
+
+    def build_player_profile(
         self,
         df: pd.DataFrame,
-        player_id: Any,
+        player_id: int,
+        *,
+        # meta/context is optional; module is name-free by default
+        role_id: str = "mezzala",
+        alarm_answers: Optional[Dict[str, Answer]] = None,
+        alarm_live_triggers: Optional[List[bool]] = None,
         context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> PlayerProfile:
+        diagnostics: Dict[str, Any] = {"role_id": role_id}
         context = context or {}
 
-        pdf = df[df["player_id"] == player_id] if "player_id" in df.columns else df.copy()
+        # Hard gates
+        if df is None or df.empty:
+            alarm = self.alarm_engine.score(
+                answers=alarm_answers or {},
+                live_triggers=alarm_live_triggers or [],
+                context_note="empty_df",
+            )
+            pa_md = self._player_analysis_min(player_id, reason="empty_df")
+            sc_md = self._scouting_card_min(player_id, reason="empty_df")
+            return PlayerProfile(
+                player_id=int(player_id),
+                summary={"status": "ABSTAINED", "reason": "empty_df", "confidence": "low"},
+                metrics=[],
+                diagnostics=diagnostics,
+                player_analysis_markdown=pa_md,
+                scouting_card_markdown=sc_md,
+                role_mismatch_alarm_markdown=alarm.markdown,
+                role_mismatch_alarm=alarm.__dict__,
+            )
 
-        # Numeric profile (per 90) — only if we can infer minutes
-        per90 = self._per90_profile(pdf)
+        if "player_id" not in df.columns:
+            alarm = self.alarm_engine.score(
+                answers=alarm_answers or {},
+                live_triggers=alarm_live_triggers or [],
+                context_note="missing_player_id_column",
+            )
+            pa_md = self._player_analysis_min(player_id, reason="missing_player_id_column")
+            sc_md = self._scouting_card_min(player_id, reason="missing_player_id_column")
+            return PlayerProfile(
+                player_id=int(player_id),
+                summary={"status": "ABSTAINED", "reason": "missing_player_id_column", "confidence": "low"},
+                metrics=[],
+                diagnostics={"missing_columns": ["player_id"], **diagnostics},
+                player_analysis_markdown=pa_md,
+                scouting_card_markdown=sc_md,
+                role_mismatch_alarm_markdown=alarm.markdown,
+                role_mismatch_alarm=alarm.__dict__,
+            )
 
-        # Decision proxies
-        decision = self._decision_proxies(pdf)
+        w = df[df["player_id"].astype(str) == str(player_id)].copy()
+        diagnostics["row_count_player"] = int(len(w))
 
-        # Tactical map proxies (very lightweight)
-        tactical = self._tactical_effect(pdf)
+        if w.empty:
+            alarm = self.alarm_engine.score(
+                answers=alarm_answers or {},
+                live_triggers=alarm_live_triggers or [],
+                context_note="no_rows_for_player",
+            )
+            pa_md = self._player_analysis_min(player_id, reason="no_rows_for_player")
+            sc_md = self._scouting_card_min(player_id, reason="no_rows_for_player")
+            return PlayerProfile(
+                player_id=int(player_id),
+                summary={"status": "ABSTAINED", "reason": "no_rows_for_player", "confidence": "low"},
+                metrics=[],
+                diagnostics=diagnostics,
+                player_analysis_markdown=pa_md,
+                scouting_card_markdown=sc_md,
+                role_mismatch_alarm_markdown=alarm.markdown,
+                role_mismatch_alarm=alarm.__dict__,
+            )
 
-        # Biomech/orientation — proxy only (do not hallucinate)
-        biomech = self._biomech_proxy(pdf)
+        # Extract signals
+        cog = extract_cognitive_signals(w)
+        ori = extract_orientation_signals(w)
 
-        # Psychological profile — requires human input; mark as ABSTAINED
-        psych = self._psych_stub()
+        metrics: List[Dict[str, Any]] = []
+        missing: List[str] = []
 
-        # Coaching notes — derived only when we have signals; else degraded
-        coaching = self._coaching_notes(pdf, tactical, decision)
-
-        # Risk analysis — partially derived
-        risk = self._risk_analysis(pdf, tactical, decision, biomech)
-
-        # System fit — cannot compute without team model; ABSTAINED
-        fit = self._system_fit_stub()
-
-        analysis = {
-            "meta": {
-                "player_name": context.get("player_name", FieldStatus(None, "ABSTAINED", "Not provided").__dict__),
-                "club": context.get("club", FieldStatus(None, "ABSTAINED", "Not provided").__dict__),
-                "league": context.get("league", FieldStatus(None, "ABSTAINED", "Not provided").__dict__),
-                "season": context.get("season", FieldStatus(None, "ABSTAINED", "Not provided").__dict__),
-                "analyst": context.get("analyst", FieldStatus(None, "ABSTAINED", "Not provided").__dict__),
-                "analysis_date": context.get("analysis_date", FieldStatus(None, "ABSTAINED", "Not provided").__dict__),
-                "engine_version": self.engine_version,
-            },
-            "player_id": {"value": player_id, "status": "OK", "note": "player_id from data"},
-            "player_identity": self._identity_stub(context),
-            "role_definition": self._role_stub(context),
-            "numerical_profile_per90": per90,
-            "biomechanic_body_logic": biomech,
-            "decision_tree": decision,
-            "tactical_effect_map": tactical,
-            "psychological_profile": psych,
-            "coaching_notes": coaching,
-            "risk_analysis": risk,
-            "system_fit_score": fit,
-            "executive_summary": self._executive_summary(per90, decision, tactical, risk),
-        }
-
-        scouting = self._derive_scouting_card(analysis)
-        alarm = self._derive_role_mismatch_alarm(analysis)
-
-        return {
-            "individual_analysis_v22": analysis,
-            "scouting_card": scouting,
-            "role_mismatch_alarm": alarm,
-        }
-
-    # ---------------------------
-    # Building blocks
-    # ---------------------------
-    def _identity_stub(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        # Mostly human-provided
-        def f(key: str) -> Dict[str, Any]:
-            v = context.get(key)
-            if v is None:
-                return FieldStatus(None, "ABSTAINED", "Not provided").__dict__
-            return FieldStatus(v, "OK", "Provided").__dict__
-
-        return {
-            "age": f("age"),
-            "height_weight": f("height_weight"),
-            "dominant_foot": f("dominant_foot"),
-            "primary_position": f("primary_position"),
-            "secondary_positions": f("secondary_positions"),
-            "career_stage": f("career_stage"),
-            "one_line_definition": f("one_line_definition"),
-        }
-
-    def _role_stub(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        def f(key: str) -> Dict[str, Any]:
-            v = context.get(key)
-            if v is None:
-                return FieldStatus(None, "ABSTAINED", "Not provided").__dict__
-            return FieldStatus(v, "OK", "Provided").__dict__
-
-        return {
-            "primary_role": f("primary_role"),
-            "secondary_role": f("secondary_role"),
-            "unsuitable_roles": f("unsuitable_roles"),
-            "role_freedom_level": f("role_freedom_level"),
-        }
-
-    def _infer_minutes(self, df: pd.DataFrame) -> Tuple[Optional[float], str]:
-        """
-        Best-effort minutes inference:
-          - If timestamp exists: (max - min) / 60
-          - Else ABSTAIN
-        """
-        tcol = _pick_time_col(df)
-        if not tcol:
-            return None, "No time/timestamp column to infer minutes."
-        s = pd.to_numeric(df[tcol], errors="coerce").dropna()
-        if s.empty:
-            return None, "Time column exists but no numeric values."
-        minutes = (float(s.max()) - float(s.min())) / 60.0
-        if minutes <= 0:
-            return None, "Non-positive inferred duration."
-        return minutes, "Inferred from timestamp span."
-
-    def _per90_profile(self, df: pd.DataFrame) -> Dict[str, Any]:
-        minutes, note = self._infer_minutes(df)
-        if minutes is None:
-            return {
-                "status": "ABSTAINED",
-                "note": note,
-                "metrics": {},
-            }
-
-        factor = 90.0 / minutes
-
-        etcol = _pick_event_type_col(df)
-        outcol = _pick_outcome_col(df)
-
-        # Heuristic event counting
-        def count_events(names: List[str]) -> float:
-            if not etcol:
-                return 0.0
-            s = df[etcol].astype(str).str.lower()
-            return float(s.isin([n.lower() for n in names]).sum())
-
-        shots = count_events(["shot", "shots", "finish", "finishing"])
-        key_pass = count_events(["key_pass", "key pass", "through_ball", "chance_created", "assist"])
-        dribbles = count_events(["dribble", "take_on", "takeon", "carry_dribble"])
-        turnovers = count_events(["turnover", "dispossessed", "lost_ball", "bad_touch"])
-
-        # Dribble success % if outcome exists
-        dribble_success_pct: Optional[float] = None
-        if etcol and outcol:
-            dr = df[df[etcol].astype(str).str.lower().isin(["dribble", "take_on", "takeon", "carry_dribble"])]
-            if not dr.empty:
-                succ = dr[outcol].apply(_as_bool_success).dropna()
-                if not succ.empty:
-                    dribble_success_pct = _safe_pct(float(succ.sum()), float(len(succ)))
-
-        xg = _safe_mean(df["xg"]) if "xg" in df.columns else None
-        xa = _safe_mean(df["xa"]) if "xa" in df.columns else None
-
-        metrics = {
-            "xg_per90": xg * factor if xg is not None else None,
-            "xa_per90": xa * factor if xa is not None else None,
-            "key_passes_per90_proxy": key_pass * factor,
-            "shots_per90_proxy": shots * factor,
-            "dribbles_per90_proxy": dribbles * factor,
-            "turnovers_per90_proxy": turnovers * factor,
-            "dribble_success_pct_proxy": dribble_success_pct,
-        }
-
-        degraded = []
-        if etcol is None:
-            degraded.append("event_type_missing")
-        if outcol is None:
-            degraded.append("outcome_missing (dribble success cannot be computed)")
-
-        status = "OK" if not degraded else "DEGRADED"
-        return {
-            "status": status,
-            "note": f"{note}" + (f" Degraded: {', '.join(degraded)}" if degraded else ""),
-            "metrics": metrics,
-        }
-
-    def _decision_proxies(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Decision speed:
-          - Use compute_decision_speed-style proxy if timestamps exist.
-          - Pressure-conditioned proxy if 'pressure' column exists.
-
-        Scanning:
-          - Not directly inferable from event data; ABSTAIN unless explicit 'scan_count' exists.
-        """
-        tcol = _pick_time_col(df)
-        pcol = _first_existing_col(df, ["pressure", "is_pressure", "under_pressure"])
-
-        if not tcol:
-            return {
-                "status": "ABSTAINED",
-                "note": "No timestamp column; decision speed proxy cannot be computed.",
-                "most_common_actions": FieldStatus(None, "DEGRADED", "event_type may be missing").__dict__,
-                "under_pressure_behavior": FieldStatus(None, "ABSTAINED", "Requires pressure + outcome context").__dict__,
-                "proxies": {},
-            }
-
-        # decision speed proxy: mean delta between consecutive events (seconds)
-        s = pd.to_numeric(df[tcol], errors="coerce").dropna().sort_values()
-        if len(s) < 2:
-            return {
-                "status": "ABSTAINED",
-                "note": "Insufficient timestamp density to compute deltas.",
-                "most_common_actions": FieldStatus(None, "DEGRADED", "event_type may be missing").__dict__,
-                "under_pressure_behavior": FieldStatus(None, "ABSTAINED", "Requires pressure + outcome context").__dict__,
-                "proxies": {},
-            }
-
-        deltas = s.diff().dropna()
-        mean_dt = float(deltas.mean())
-
-        proxies: Dict[str, Any] = {
-            "decision_speed_sec_proxy": mean_dt,
-        }
-
-        status = "OK"
-        note = "Decision speed computed from timestamp deltas (proxy)."
-
-        if pcol:
-            ps = pd.to_numeric(df[pcol], errors="coerce")
-            if ps.notna().sum() > 0:
-                # treat >0 as pressured
-                pressured_mask = ps.fillna(0) > 0
-                ts = pd.to_numeric(df[tcol], errors="coerce")
-                t_press = ts[pressured_mask].dropna().sort_values()
-                if len(t_press) >= 2:
-                    proxies["decision_speed_under_pressure_sec_proxy"] = float(t_press.diff().dropna().mean())
-                else:
-                    proxies["decision_speed_under_pressure_sec_proxy"] = None
-                    status = "DEGRADED"
-                    note += " Pressure column exists but pressured timestamps insufficient."
-            else:
-                status = "DEGRADED"
-                note += " Pressure column exists but non-numeric."
-
-        # Most common actions
-        etcol = _pick_event_type_col(df)
-        if etcol:
-            vc = df[etcol].astype(str).value_counts().head(5).to_dict()
-            actions = FieldStatus(vc, "OK", "Top-5 action labels by frequency.").__dict__
+        if cog.decision_speed_mean_s is not None:
+            metrics.append({"metric_id": "decision_speed_mean_s", "value": float(cog.decision_speed_mean_s), "unit": "sec"})
         else:
-            actions = FieldStatus(None, "DEGRADED", "Missing event_type column.").__dict__
+            missing.append("decision_speed_mean_s")
 
-        # Under pressure behavior (very rough): turnovers under pressure
-        under_pressure = FieldStatus(None, "ABSTAINED", "Requires event_type+pressure mapping for robust claim.").__dict__
-        if etcol and pcol:
-            pressured_mask = pd.to_numeric(df[pcol], errors="coerce").fillna(0) > 0
-            s_evt = df[etcol].astype(str).str.lower()
-            turnovers = s_evt.isin(["turnover", "dispossessed", "lost_ball", "bad_touch"])
-            n = int((pressured_mask & turnovers).sum())
-            under_pressure = FieldStatus(
-                {"turnovers_under_pressure_proxy": n},
-                "DEGRADED",
-                "Proxy count; depends on provider labels.",
-            ).__dict__
+        if cog.scan_freq_10s is not None:
+            metrics.append({"metric_id": "scan_freq_10s", "value": float(cog.scan_freq_10s), "unit": "hz"})
+        else:
+            missing.append("scan_freq_10s")
 
-        return {
+        if cog.contextual_awareness_score is not None:
+            metrics.append({"metric_id": "contextual_awareness_score", "value": float(cog.contextual_awareness_score), "unit": "0..1"})
+        else:
+            missing.append("contextual_awareness_score")
+
+        metrics.append({"metric_id": "cognitive_note", "value": cog.note})
+
+        if ori.defender_side_on_score is not None:
+            metrics.append({"metric_id": "defender_side_on_score", "value": float(ori.defender_side_on_score), "unit": "0..1"})
+        if ori.square_on_rate is not None:
+            metrics.append({"metric_id": "square_on_rate", "value": float(ori.square_on_rate), "unit": "0..1"})
+        if ori.channeling_to_wing_rate is not None:
+            metrics.append({"metric_id": "channeling_to_wing_rate", "value": float(ori.channeling_to_wing_rate), "unit": "0..1"})
+        metrics.append({"metric_id": "orientation_note", "value": ori.note})
+
+        # Summary bands (conservative)
+        confidence = "medium"
+        if len(missing) >= 2:
+            confidence = "low"
+        if cog.contextual_awareness_score is not None and cog.contextual_awareness_score >= 0.75 and confidence != "low":
+            confidence = "high"
+
+        status = "OK" if len(missing) == 0 else "DEGRADED"
+        if len(missing) >= 3:
+            status = "ABSTAINED"
+
+        summary = {
             "status": status,
-            "note": note,
-            "most_common_actions": actions,
-            "under_pressure_behavior": under_pressure,
-            "proxies": proxies,
+            "player_id": int(player_id),
+            "confidence": confidence,
+            "missing": missing,
+            "headline": self._headline(cog.contextual_awareness_score, cog.decision_speed_mean_s),
         }
 
-    def _tactical_effect(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Very lightweight spatial/zone proxy:
-          - Requires x,y columns. If missing -> ABSTAINED.
-        """
-        if not {"x", "y"}.issubset(df.columns):
-            return {
-                "status": "ABSTAINED",
-                "note": "No x/y columns; cannot infer zones or productive areas.",
-                "efficient_zones": FieldStatus(None, "ABSTAINED", "No spatial data.").__dict__,
-                "inefficient_zones": FieldStatus(None, "ABSTAINED", "No spatial data.").__dict__,
-                "box_contribution_type": FieldStatus(None, "ABSTAINED", "No spatial data.").__dict__,
-                "production_geometry": FieldStatus(None, "ABSTAINED", "No spatial data.").__dict__,
-            }
+        diagnostics["missing_metrics"] = missing
 
-        x = pd.to_numeric(df["x"], errors="coerce")
-        y = pd.to_numeric(df["y"], errors="coerce")
-        valid = x.notna() & y.notna()
-        if valid.sum() == 0:
-            return {
-                "status": "ABSTAINED",
-                "note": "x/y exist but no numeric values.",
-                "efficient_zones": FieldStatus(None, "ABSTAINED", "No spatial data.").__dict__,
-                "inefficient_zones": FieldStatus(None, "ABSTAINED", "No spatial data.").__dict__,
-                "box_contribution_type": FieldStatus(None, "ABSTAINED", "No spatial data.").__dict__,
-                "production_geometry": FieldStatus(None, "ABSTAINED", "No spatial data.").__dict__,
-            }
-
-        # crude zones: thirds by x
-        xq = x[valid]
-        bins = pd.cut(xq, bins=[-1e9, 33.3, 66.6, 1e9], labels=["def_third", "mid_third", "att_third"])
-        counts = bins.value_counts().to_dict()
-
-        # Half-space proxy by y (assuming 0..100 scale; if not, still relative)
-        yq = y[valid]
-        half_space = ((yq > yq.quantile(0.33)) & (yq < yq.quantile(0.66))).sum()
-        wide = (yq <= yq.quantile(0.33)).sum() + (yq >= yq.quantile(0.66)).sum()
-
-        efficient = FieldStatus(
-            {"third_counts": counts, "half_space_touch_proxy": int(half_space)},
-            "DEGRADED",
-            "Proxy zoning; depends on coordinate system.",
-        ).__dict__
-
-        inefficient = FieldStatus(
-            {"wide_touch_proxy": int(wide)},
-            "DEGRADED",
-            "Proxy; depends on coordinate system.",
-        ).__dict__
-
-        return {
-            "status": "DEGRADED",
-            "note": "Zone inference is proxy-level. Coordinate system must be standardized for strong claims.",
-            "efficient_zones": efficient,
-            "inefficient_zones": inefficient,
-            "box_contribution_type": FieldStatus(None, "ABSTAINED", "Needs box definition + event labels.").__dict__,
-            "production_geometry": FieldStatus(None, "ABSTAINED", "Needs shot/pass endpoints.").__dict__,
-        }
-
-    def _biomech_proxy(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Biomech/orientation is not reliably inferrable from basic event logs.
-        If 'orientation_deg' or similar exists, we can produce a degraded proxy.
-        """
-        angle_col = _first_existing_col(
-            df,
-            ["orientation_deg", "body_orientation_deg", "body_angle_deg", "hips_angle_deg", "stance_angle_deg"],
+        # Role mismatch alarm: unknown -> conservative half-risk
+        alarm = self.alarm_engine.score(
+            answers=alarm_answers or {},
+            live_triggers=alarm_live_triggers or [],
+            context_note=f"role_id={role_id}; player_id={player_id}",
         )
-        if not angle_col:
-            return {
-                "status": "ABSTAINED",
-                "note": "No orientation angle columns; body logic section requires video/tracking or explicit angle signals.",
-                "somatotype": FieldStatus(None, "ABSTAINED", "Human input required.").__dict__,
-                "explosiveness": FieldStatus(None, "ABSTAINED", "Human input required.").__dict__,
-                "max_speed": FieldStatus(None, "ABSTAINED", "Tracking required.").__dict__,
-                "repeat_sprint": FieldStatus(None, "ABSTAINED", "Tracking required.").__dict__,
-                "stamina": FieldStatus(None, "ABSTAINED", "Tracking required.").__dict__,
-                "injury_history": FieldStatus(None, "ABSTAINED", "Medical history required.").__dict__,
-                "orientation_notes": FieldStatus(None, "ABSTAINED", "No orientation telemetry.").__dict__,
-            }
 
-        mean_angle = _safe_mean(df[angle_col])
-        return {
-            "status": "DEGRADED",
-            "note": f"Orientation proxy computed from {angle_col} mean. Provider semantics may vary.",
-            "somatotype": FieldStatus(None, "ABSTAINED", "Human input required.").__dict__,
-            "explosiveness": FieldStatus(None, "ABSTAINED", "Human input required.").__dict__,
-            "max_speed": FieldStatus(None, "ABSTAINED", "Tracking required.").__dict__,
-            "repeat_sprint": FieldStatus(None, "ABSTAINED", "Tracking required.").__dict__,
-            "stamina": FieldStatus(None, "ABSTAINED", "Tracking required.").__dict__,
-            "injury_history": FieldStatus(None, "ABSTAINED", "Medical history required.").__dict__,
-            "orientation_notes": FieldStatus(
-                {"mean_angle_deg_proxy": mean_angle, "angle_col": angle_col},
-                "DEGRADED",
-                "Angle-based proxy only.",
-            ).__dict__,
-        }
+        # Render canonical v22 templates (no hallucination)
+        player_analysis_md = self._render_player_analysis_v22(
+            player_id=int(player_id),
+            role_id=role_id,
+            summary=summary,
+            metrics=metrics,
+            cog_note=str(cog.note or ""),
+            ori_note=str(ori.note or ""),
+            context=context,
+        )
 
-    def _psych_stub(self) -> Dict[str, Any]:
-        return {
-            "status": "ABSTAINED",
-            "note": "Psych profile requires coach/analyst input; not inferable from event logs.",
-            "role_clarity_need": FieldStatus(None, "ABSTAINED", "Human input required.").__dict__,
-            "freedom_tolerance": FieldStatus(None, "ABSTAINED", "Human input required.").__dict__,
-            "post_error_reaction": FieldStatus(None, "ABSTAINED", "Human input required.").__dict__,
-            "confidence_performance_link": FieldStatus(None, "ABSTAINED", "Human input required.").__dict__,
-        }
+        scouting_card_md = self._render_scouting_card_v22(
+            player_id=int(player_id),
+            role_id=role_id,
+            summary=summary,
+            metrics=metrics,
+            alarm=alarm,
+            context=context,
+        )
 
-    def _coaching_notes(self, df: pd.DataFrame, tactical: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str, Any]:
-        notes: List[str] = []
+        return PlayerProfile(
+            player_id=int(player_id),
+            summary=summary,
+            metrics=metrics,
+            diagnostics=diagnostics,
+            player_analysis_markdown=player_analysis_md,
+            scouting_card_markdown=scouting_card_md,
+            role_mismatch_alarm_markdown=alarm.markdown,
+            role_mismatch_alarm=alarm.__dict__,
+        )
 
-        # If many turnovers under pressure proxy exists, suggest support
-        upb = decision.get("under_pressure_behavior", {})
-        if isinstance(upb, dict) and upb.get("value") and isinstance(upb["value"], dict):
-            n = upb["value"].get("turnovers_under_pressure_proxy")
-            if isinstance(n, int) and n >= 2:
-                notes.append("Baskı altında 2. opsiyon (duvar/istasyon) sağlayın; izolasyonu düşürün.")
+    # ------------------------------------------------------------
+    # Minimal fallbacks (stable)
+    # ------------------------------------------------------------
+    @staticmethod
+    def _player_analysis_min(player_id: int, reason: str) -> str:
+        return (
+            "# HP ENGINE v22.x — Bireysel Oyuncu Analizi (ABSTAINED)\n\n"
+            f"Oyuncu: (player_id={player_id})\n\n"
+            f"> Veri yetersiz / gate: {reason}\n"
+        )
 
-        # If half-space touches proxy exists, suggest usage
-        ez = tactical.get("efficient_zones", {})
-        if isinstance(ez, dict) and ez.get("value") and isinstance(ez["value"], dict):
-            hs = ez["value"].get("half_space_touch_proxy")
-            if isinstance(hs, int) and hs > 0:
-                notes.append("Half-space temasları üzerinden rol kurgulayın; iç koridor bağlantılarını güçlendirin.")
+    @staticmethod
+    def _scouting_card_min(player_id: int, reason: str) -> str:
+        return (
+            "# HP ENGINE v22.x — Scouting Card (ABSTAINED)\n\n"
+            f"OYUNCU: (player_id={player_id})\n\n"
+            f"> Veri yetersiz / gate: {reason}\n"
+        )
 
-        status = "OK" if notes else "DEGRADED"
-        return {
-            "status": status,
-            "note": "Derived from proxies when possible; otherwise requires analyst input.",
-            "how_to_use": FieldStatus(notes if notes else None, status, "Proxy-derived.").__dict__,
-            "how_not_to_use": FieldStatus(None, "ABSTAINED", "Needs tactical context.").__dict__,
-            "support_needs": FieldStatus(None, "ABSTAINED", "Needs team model.").__dict__,
-        }
+    # ------------------------------------------------------------
+    # Template renderers (v22)
+    # ------------------------------------------------------------
+    @staticmethod
+    def _mget(metrics: List[Dict[str, Any]], metric_id: str) -> Any:
+        for m in metrics:
+            if m.get("metric_id") == metric_id:
+                return m.get("value")
+        return None
 
-    def _risk_analysis(self, df: pd.DataFrame, tactical: Dict[str, Any], decision: Dict[str, Any], biomech: Dict[str, Any]) -> Dict[str, Any]:
-        risks: Dict[str, Any] = {"tactical": [], "physical": [], "psychological": []}
+    @staticmethod
+    def _fmt(v: Any, *, digits: int = 2) -> str:
+        if v is None:
+            return "—"
+        try:
+            if isinstance(v, (int, float)):
+                return f"{float(v):.{digits}f}"
+        except Exception:
+            pass
+        s = str(v).strip()
+        return s if s else "—"
 
-        # Tactical risk: pressure turnovers proxy
-        upb = decision.get("under_pressure_behavior", {})
-        if isinstance(upb, dict) and upb.get("value") and isinstance(upb["value"], dict):
-            n = upb["value"].get("turnovers_under_pressure_proxy")
-            if isinstance(n, int) and n >= 3:
-                risks["tactical"].append("Baskı altında top kaybı riski yüksek (proxy). İzolasyon azaltılmalı.")
-
-        # Physical risk: cannot infer; keep abstained
-        # Psych risk: cannot infer; keep abstained
-
-        status = "DEGRADED" if any(risks[k] for k in risks) else "ABSTAINED"
-        return {
-            "status": status,
-            "note": "Tactical risks can be proxy-derived; physical/psych require external inputs.",
-            "tactical": FieldStatus(risks["tactical"] or None, status, "Proxy-derived.").__dict__,
-            "physical": FieldStatus(None, "ABSTAINED", "Requires load/injury data.").__dict__,
-            "psychological": FieldStatus(None, "ABSTAINED", "Requires observation.").__dict__,
-        }
-
-    def _system_fit_stub(self) -> Dict[str, Any]:
-        return {
-            "status": "ABSTAINED",
-            "note": "System fit requires team model + league baselines.",
-            "team_structure_fit_0_10": FieldStatus(None, "ABSTAINED", "Not available.").__dict__,
-            "league_fit_0_10": FieldStatus(None, "ABSTAINED", "Not available.").__dict__,
-            "coach_profile_fit": FieldStatus(None, "ABSTAINED", "Not available.").__dict__,
-        }
-
-    def _executive_summary(
+    def _render_player_analysis_v22(
         self,
-        per90: Dict[str, Any],
-        decision: Dict[str, Any],
-        tactical: Dict[str, Any],
-        risk: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        # No hallucination: build a cautious summary only from available proxy signals
-        bullets: List[str] = []
-        if per90.get("metrics"):
-            m = per90["metrics"]
-            if m.get("dribble_success_pct_proxy") is not None:
-                bullets.append(f"Dripling başarı% (proxy): {m['dribble_success_pct_proxy']:.1f}")
-            if m.get("turnovers_per90_proxy") is not None:
-                bullets.append(f"Top kaybı (proxy) per90: {m['turnovers_per90_proxy']:.2f}")
+        *,
+        player_id: int,
+        role_id: str,
+        summary: Dict[str, Any],
+        metrics: List[Dict[str, Any]],
+        cog_note: str,
+        ori_note: str,
+        context: Dict[str, Any],
+    ) -> str:
+        tpl = self.renderer.load("player_analysis_v22.md")
+        if not tpl:
+            return self._player_analysis_min(player_id, reason="template_missing")
 
-        proxies = decision.get("proxies", {})
-        if "decision_speed_sec_proxy" in proxies:
-            bullets.append(f"Karar hızı (proxy, sn): {proxies['decision_speed_sec_proxy']:.2f}")
+        # We do not have per-90 xG/xA/key passes etc from event logs in this engine.
+        # Keep them blank (—). Cognitive/orientation goes into commentary fields.
+        ctx = {
+            "player_name": context.get("player_name", "—"),
+            "club": context.get("club", "—"),
+            "league": context.get("league", "—"),
+            "season": context.get("season", "—"),
+            "analyst": context.get("analyst", "—"),
+            "analysis_date": context.get("analysis_date", "—"),
+            "engine_version": self.ENGINE_VERSION,
 
-        if risk.get("tactical", {}).get("value"):
-            bullets.append("Taktik risk sinyali mevcut (proxy).")
+            "age": context.get("age", "—"),
+            "height_weight": context.get("height_weight", "—"),
+            "dominant_foot": context.get("dominant_foot", "—"),
+            "primary_position": context.get("primary_position", "—"),
+            "secondary_positions": context.get("secondary_positions", "—"),
+            "career_phase": context.get("career_phase", "—"),
+            "one_liner_definition": context.get("one_liner_definition", summary.get("headline", "—")),
 
-        status = "OK" if bullets else "ABSTAINED"
-        return FieldStatus(
-            "> " + (" | ".join(bullets) if bullets else ""),
-            status,
-            "Generated only from available proxies; otherwise abstained.",
-        ).__dict__
+            "primary_role": context.get("primary_role", role_id),
+            "secondary_role": context.get("secondary_role", "—"),
+            "bad_roles": context.get("bad_roles", "—"),
+            "role_freedom": context.get("role_freedom", "—"),
 
-    # ---------------------------
-    # Derived outputs
-    # ---------------------------
-    def _derive_scouting_card(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Derive a one-page scouting card from v22 analysis.
-        Strict: if missing, abstain; never invent.
-        """
-        pid = analysis.get("player_id", {}).get("value")
-        per90 = analysis.get("numerical_profile_per90", {})
-        metrics = per90.get("metrics", {}) if isinstance(per90, dict) else {}
+            # Numeric profile (unknown in this engine → abstain placeholders)
+            "dribble_success": "—",
+            "dribble_pctile": "—",
+            "turnovers": "—",
+            "turnovers_pctile": "—",
+            "xg": "—",
+            "xg_pctile": "—",
+            "xa": "—",
+            "xa_pctile": "—",
+            "key_passes": "—",
+            "key_passes_pctile": "—",
+            "shots": "—",
+            "shots_pctile": "—",
 
-        one_liner = analysis.get("player_identity", {}).get("one_line_definition", {})
-        one_liner_text = one_liner.get("value") if isinstance(one_liner, dict) else None
+            "numeric_profile_commentary": (
+                "Bu veri setinde klasik per90 üretimi (xG/xA/şut/anahtar pas/dripling) için "
+                "gerekli provider kolonları yoksa sistem uydurmaz. "
+                f"\n\nBilişsel sinyal notu: {cog_note or '—'}"
+                f"\n\nOryantasyon sinyal notu: {ori_note or '—'}"
+            ),
 
-        core = {
-            "xg": metrics.get("xg_per90"),
-            "xa": metrics.get("xa_per90"),
-            "key_pass": metrics.get("key_passes_per90_proxy"),
-            "shots": metrics.get("shots_per90_proxy"),
-            "dribble_pct": metrics.get("dribble_success_pct_proxy"),
-            "turnovers": metrics.get("turnovers_per90_proxy"),
+            # Biomechanics (tracking/video needed)
+            "somatotype": context.get("somatotype", "—"),
+            "explosiveness": context.get("explosiveness", "—"),
+            "max_speed": context.get("max_speed", "—"),
+            "repeat_sprint": context.get("repeat_sprint", "—"),
+            "stamina": context.get("stamina", "—"),
+            "injury_history": context.get("injury_history", "—"),
+            "orientation_notes": context.get("orientation_notes", ori_note or "—"),
+
+            # Decision tree
+            "common_actions": "—",
+            "pressure_behavior": "—",
+
+            # Tactical effect map (needs x/y/end_x/end_y + zones)
+            "best_zones": "—",
+            "worst_zones": "—",
+            "box_contribution": "—",
+            "production_geometry": "—",
+
+            # Psychological profile (human input)
+            "role_clarity_need": context.get("role_clarity_need", "—"),
+            "freedom_tolerance": context.get("freedom_tolerance", "—"),
+            "post_error_reaction": context.get("post_error_reaction", "—"),
+            "confidence_perf_link": context.get("confidence_perf_link", "—"),
+
+            # Coaching notes
+            "how_to_use": context.get("how_to_use", "—"),
+            "how_not_to_use": context.get("how_not_to_use", "—"),
+            "support_needs": context.get("support_needs", "—"),
+
+            # Risks
+            "tactical_risks": context.get("tactical_risks", "—"),
+            "physical_risks": context.get("physical_risks", "—"),
+            "psych_risks": context.get("psych_risks", "—"),
+
+            # Fit score
+            "fit_team": context.get("fit_team", "—"),
+            "fit_league": context.get("fit_league", "—"),
+            "fit_coach": context.get("fit_coach", "—"),
+
+            # Executive summary
+            "executive_summary": context.get("executive_summary", summary.get("headline", "—")),
         }
 
-        return {
-            "player_id": pid,
-            "one_liner_verdict": FieldStatus(one_liner_text, "DEGRADED" if one_liner_text is None else "OK",
-                                             "Provided by analyst or absent.").__dict__,
-            "numerical_core_per90": FieldStatus(core, "DEGRADED", "Mix of computed proxies + missing fields.").__dict__,
-            "profile_tags": FieldStatus(None, "ABSTAINED", "Requires archetype engine + zone standardization.").__dict__,
-            "usage_instructions": analysis.get("coaching_notes", {}).get("how_to_use", FieldStatus(None, "ABSTAINED", "").__dict__),
-            "dependencies_yes_no": FieldStatus(None, "ABSTAINED", "Requires team model / role graph.").__dict__,
-            "red_flags": analysis.get("risk_analysis", {}).get("tactical", FieldStatus(None, "ABSTAINED", "").__dict__),
-            "fit_scores": analysis.get("system_fit_score", {}),
+        return self.renderer.render(tpl, ctx)
+
+    def _render_scouting_card_v22(
+        self,
+        *,
+        player_id: int,
+        role_id: str,
+        summary: Dict[str, Any],
+        metrics: List[Dict[str, Any]],
+        alarm: Any,
+        context: Dict[str, Any],
+    ) -> str:
+        tpl = self.renderer.load("scouting_card_v22.md")
+        if not tpl:
+            return self._scouting_card_min(player_id, reason="template_missing")
+
+        # We can place cognitive proxy into the “one sentence” if no human one-liner exists.
+        one_sentence = context.get("one_sentence_verdict")
+        if not one_sentence:
+            one_sentence = summary.get("headline", "—")
+
+        # Numeric core per 90: not available here -> abstain placeholders.
+        ctx = {
+            "player_name": context.get("player_name", f"(player_id={player_id})"),
+            "club_league_season": context.get("club_league_season", "—"),
+            "position_role": context.get("position_role", role_id),
+            "dominant_foot": context.get("dominant_foot", "—"),
+            "age_height_weight": context.get("age_height_weight", "—"),
+
+            "one_sentence_verdict": one_sentence,
+
+            "xg": "—",
+            "xa": "—",
+            "key_passes": "—",
+            "shots": "—",
+            "dribble_success": "—",
+            "turnovers": "—",
+
+            "archetype": context.get("archetype", "—"),
+            "best_zone": context.get("best_zone", "—"),
+            "main_weapons": context.get("main_weapons", "—"),
+            "main_limits": context.get("main_limits", "—"),
+
+            "usage_1": context.get("usage_1", "—"),
+            "usage_2": context.get("usage_2", "—"),
+            "usage_3": context.get("usage_3", "—"),
+
+            "need_overlap": context.get("need_overlap", "BILINMIYOR"),
+            "need_wall_station": context.get("need_wall_station", "BILINMIYOR"),
+            "need_9_anchor": context.get("need_9_anchor", "BILINMIYOR"),
+            "need_far_post_runner": context.get("need_far_post_runner", "BILINMIYOR"),
+
+            # Risks: we can inject role-mismatch band as tactical warning if high
+            "risk_tactical": context.get("risk_tactical", f"Rol alarm bandı: {getattr(alarm, 'band_after_triggers', getattr(alarm, 'band', '—'))}"),
+            "risk_physical": context.get("risk_physical", "—"),
+            "risk_psychological": context.get("risk_psychological", "—"),
+
+            "fit_team": context.get("fit_team", "—"),
+            "fit_league": context.get("fit_league", "—"),
+            "fit_coach": context.get("fit_coach", "—"),
         }
 
-    def _derive_role_mismatch_alarm(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Provide checklist scaffold + data-driven hints where possible.
-        """
-        # Base checklist is human-answered; we only add trigger hints.
-        triggers: List[str] = []
+        return self.renderer.render(tpl, ctx)
 
-        upb = analysis.get("decision_tree", {}).get("under_pressure_behavior", {})
-        if isinstance(upb, dict) and upb.get("value") and isinstance(upb["value"], dict):
-            n = upb["value"].get("turnovers_under_pressure_proxy")
-            if isinstance(n, int) and n >= 3:
-                triggers.append("Baskı altında top kaybı artışı (proxy) → izolasyon/bağlantı alarmı.")
-
-        return {
-            "status": "DEGRADED" if triggers else "ABSTAINED",
-            "note": "Checklist answers require match plan + coach input. Engine adds only data-driven trigger hints.",
-            "trigger_hints": FieldStatus(triggers or None, "DEGRADED" if triggers else "ABSTAINED", "Proxy-derived.").__dict__,
-            "checklist": FieldStatus(
-                None,
-                "ABSTAINED",
-                "Use HP ENGINE v22.x Role Mismatch Alarm Checklist template (manual yes/no scoring).",
-            ).__dict__,
-        }
+    # ------------------------------------------------------------
+    # Headline
+    # ------------------------------------------------------------
+    @staticmethod
+    def _headline(awareness: Optional[float], decision_s: Optional[float]) -> str:
+        if awareness is None and decision_s is None:
+            return "Yetersiz bilişsel sinyal: veri bu oyuncu için konuşmuyor."
+        parts = []
+        if awareness is not None:
+            if awareness >= 0.75:
+                parts.append("Awareness güçlü bant")
+            elif awareness >= 0.55:
+                parts.append("Awareness orta bant")
+            else:
+                parts.append("Awareness zayıf bant")
+        if decision_s is not None:
+            if decision_s <= 0.8:
+                parts.append("karar hızı elite")
+            elif decision_s <= 1.2:
+                parts.append("karar hızı ortalama")
+            else:
+                parts.append("karar hızı yavaş")
+        return " • ".join(parts)
