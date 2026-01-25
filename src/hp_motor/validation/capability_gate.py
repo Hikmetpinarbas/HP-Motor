@@ -24,48 +24,39 @@ class GateDecision:
 
 class CapabilityGate:
     """
-    Runtime gate for:
-      - Input-Gated Compute
-      - Missing input -> module disabled (BLOCKED) OR degraded.
-
-    It is conservative: if catalog entry is missing, it will not allow the run to
-    pretend it is safe. It will degrade with explicit reason, never silently pass.
+    Input-Gated Compute.
+    Reads SSOT from registries/capabilities.yaml -> analyses section.
+    Fail-closed policy:
+      - Missing catalog entry => DEGRADED (never silent pass)
+      - Missing hard inputs => BLOCKED
     """
 
     def __init__(self, capabilities_yaml_path: Optional[str] = None):
         self.capabilities_yaml_path = capabilities_yaml_path or "src/hp_motor/registries/capabilities.yaml"
-        self._capabilities = self._load_capabilities_safely(self.capabilities_yaml_path)
+        self._cap = self._load(self.capabilities_yaml_path)
 
     @staticmethod
-    def _load_capabilities_safely(path: str) -> Dict[str, object]:
+    def _load(path: str) -> Dict[str, object]:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         except FileNotFoundError:
-            # Fail-closed in a controlled way: we can still run, but will degrade decisions.
             return {"_error": f"capabilities.yaml missing at {path}"}
         except Exception as e:
             return {"_error": f"capabilities.yaml load error: {e}"}
 
-    def decide_for_analysis(self, analysis_type: str, manifest: InputManifest) -> GateDecision:
-        """
-        The capabilities.yaml is expected to define:
-          analyses:
-            <analysis_type>:
-              hard_requires: [event, video, fitness, tracking, doc, spatial]
-              soft_requires: [ ... ]  # optional -> DEGRADED if missing
-        """
-        cap_error = self._capabilities.get("_error")
-        analyses = (self._capabilities or {}).get("analyses", {})
-
-        if cap_error:
+    def decide(self, analysis_type: str, manifest: InputManifest) -> GateDecision:
+        err = self._cap.get("_error")
+        if err:
             return GateDecision(
                 status="DEGRADED",
-                reasons=[f"CAPABILITY_MATRIX_UNAVAILABLE: {cap_error}"],
+                reasons=[f"CAPABILITY_MATRIX_UNAVAILABLE: {err}"],
                 missing_inputs=[],
             )
 
+        analyses = (self._cap or {}).get("analyses", {}) or {}
         entry = analyses.get(analysis_type)
+
         if not entry:
             return GateDecision(
                 status="DEGRADED",
@@ -76,8 +67,8 @@ class CapabilityGate:
         hard = entry.get("hard_requires", []) or []
         soft = entry.get("soft_requires", []) or []
 
-        missing_hard = [k for k in hard if not self._has_input(k, manifest)]
-        missing_soft = [k for k in soft if not self._has_input(k, manifest)]
+        missing_hard = [k for k in hard if not self._has(k, manifest)]
+        missing_soft = [k for k in soft if not self._has(k, manifest)]
 
         if missing_hard:
             return GateDecision(
@@ -96,18 +87,18 @@ class CapabilityGate:
         return GateDecision(status="OK", reasons=[], missing_inputs=[])
 
     @staticmethod
-    def _has_input(key: str, manifest: InputManifest) -> bool:
-        key = key.strip().lower()
-        if key == "event":
-            return manifest.has_event
-        if key == "spatial":
-            return manifest.has_spatial
-        if key == "fitness":
-            return manifest.has_fitness
-        if key == "video":
-            return manifest.has_video
-        if key == "tracking":
-            return manifest.has_tracking
-        if key == "doc":
-            return manifest.has_doc
+    def _has(key: str, m: InputManifest) -> bool:
+        k = key.strip().lower()
+        if k == "event":
+            return m.has_event
+        if k == "spatial":
+            return m.has_spatial
+        if k == "fitness":
+            return m.has_fitness
+        if k == "video":
+            return m.has_video
+        if k == "tracking":
+            return m.has_tracking
+        if k == "doc":
+            return m.has_doc
         return False
