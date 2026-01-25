@@ -1,8 +1,44 @@
-version: "1.0"
+version: "1.1"
 notes: >
-  v1 capability layer. Norm/percentile yok; skorlar heuristik.
-  Ama mimari olarak "metric -> capability -> role -> verdict" zincirini başlatır.
+  SSOT capability layer.
+  - capabilities: metric-weight bundles (legacy scoring)
+  - analyses: runtime Input-Gated Compute catalog (NEW)
 
+# -------------------------
+# ANALYSIS CATALOG (SSOT)
+# -------------------------
+analyses:
+  generic:
+    hard_requires: ["event"]
+    soft_requires: ["doc"]
+
+  player_role_fit:
+    hard_requires: ["event"]
+    soft_requires: ["fitness", "doc"]
+
+  passing_network:
+    hard_requires: ["event", "spatial"]
+    soft_requires: ["video"]
+
+  pitch_control:
+    hard_requires: ["event", "tracking"]
+    soft_requires: ["video"]
+
+  tsi_v1:
+    hard_requires: ["event"]
+    soft_requires: ["fitness"]
+
+  ontology_report_v1:
+    hard_requires: ["event"]
+    soft_requires: ["fitness", "doc"]
+
+  war_room_audit:
+    hard_requires: ["event"]
+    soft_requires: ["doc", "video", "fitness", "tracking"]
+
+# -------------------------
+# LEGACY CAPABILITIES (kept)
+# -------------------------
 capabilities:
   threat_progression:
     label: "Threat Progression"
