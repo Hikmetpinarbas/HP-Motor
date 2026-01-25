@@ -1,222 +1,268 @@
 # ============================================================
-# HP MOTOR — STREAMLIT APPLICATION
-# Canonical, src-layout safe, CI & Android compatible
+# HP MOTOR — Single-File App Layer (Manifest + Ontology + Audit)
+# Streamlit-first. No FastAPI.
+# Purpose:
+#  - Provide a stable "single entrypoint" UI
+#  - Expose manifest / ontology / audit / dictionary in one place
+#  - Keep optional bridges to hp_motor modules without breaking boot
 # ============================================================
 
+from __future__ import annotations
+
+import json
+import os
 import sys
 from pathlib import Path
+from typing import Any, Dict, Optional
 
-# ------------------------------------------------------------
-# SRC-LAYOUT BOOTSTRAP (NO ASSUMPTIONS)
-# ------------------------------------------------------------
+import streamlit as st
+
+# -----------------------------
+# SRC-LAYOUT BOOTSTRAP
+# -----------------------------
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
 if SRC.exists():
     sys.path.insert(0, str(SRC))
 
-# ------------------------------------------------------------
-# STANDARD LIBS
-# ------------------------------------------------------------
-import pandas as pd
-import streamlit as st
-
-# ------------------------------------------------------------
-# HP MOTOR IMPORTS
-# ------------------------------------------------------------
-from hp_motor.pipelines.run_analysis import SovereignOrchestrator
-from hp_motor.modules.individual_review import IndividualReviewEngine
-
-# ============================================================
-# STREAMLIT CONFIG
-# ============================================================
-st.set_page_config(
-    page_title="HP Motor",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-st.title("HP Motor — Sovereign Analysis Engine")
-
-# ============================================================
-# FILE UPLOAD
-# ============================================================
-st.sidebar.header("Veri Girişi")
-
-uploaded_file = st.sidebar.file_uploader(
-    "CSV veri dosyası yükle",
-    type=["csv"],
-)
-
-if uploaded_file is None:
-    st.info("Analiz başlatmak için bir CSV dosyası yükle.")
-    st.stop()
-
-# ============================================================
-# LOAD DATA
-# ============================================================
-try:
-    df = pd.read_csv(uploaded_file)
-except Exception as e:
-    st.error(f"CSV okunamadı: {e}")
-    st.stop()
-
-st.success("Veri başarıyla yüklendi.")
-st.caption(f"Satır: {len(df)} | Kolon: {len(df.columns)}")
-
-# ============================================================
-# CONTROL PANEL
-# ============================================================
-st.sidebar.divider()
-st.sidebar.header("Analiz Ayarları")
-phase = st.sidebar.selectbox("Phase", ["open_play", "set_piece", "transition"], index=0)
-role = st.sidebar.selectbox("Rol", ["mezzala", "pivot", "winger_solver", "cb", "fb"], index=0)
-
-# ============================================================
-# MAIN ANALYSIS (SOVEREIGN PIPELINE)
-# ============================================================
-st.header("Sistemik Analiz (Sovereign)")
-
-orchestrator = SovereignOrchestrator()
-
-try:
-    sovereign_output = orchestrator.run(df, phase=phase, role=role)
-except Exception as e:
-    st.error(f"Sistemik analiz çalıştırılamadı: {e}")
-    st.stop()
-
-status = sovereign_output.get("status", "UNKNOWN")
-confidence = (sovereign_output.get("evidence_graph") or {}).get("overall_confidence", "unknown")
-st.subheader(f"Durum: {status} | Güven: {confidence}")
-
-with st.expander("Diagnostics (neden / sınırlar / kalite)", expanded=(status != "OK")):
-    st.json(sovereign_output.get("diagnostics", {}))
-
-with st.expander("Evidence Graph (hüküm değil: gerekçe)", expanded=True):
-    st.json(sovereign_output.get("evidence_graph", {}))
-
-st.subheader("Metrikler")
-st.dataframe(pd.DataFrame(sovereign_output.get("metrics", [])), use_container_width=True)
-
-st.subheader("Tablolar")
-tables = sovereign_output.get("tables", {}) or {}
-if not tables:
-    st.info("Tablo üretilmedi.")
-else:
-    for k, v in tables.items():
-        st.markdown(f"**{k}**")
-        try:
-            st.dataframe(v, use_container_width=True)
-        except Exception:
-            st.write(v)
-
-st.subheader("Listeler / Bullet çıktılar")
-lists_out = sovereign_output.get("lists", {}) or {}
-if not lists_out:
-    st.info("Liste üretilmedi.")
-else:
-    for k, v in lists_out.items():
-        st.markdown(f"**{k}**")
-        st.write(v)
-
-st.subheader("Figürler")
-figs = sovereign_output.get("figure_objects", {}) or {}
-if not figs:
-    st.info("Figür üretilmedi (x/y kolonu yoksa beklenir).")
-else:
-    for k, fig in figs.items():
-        st.markdown(f"**{k}**")
-        try:
-            st.pyplot(fig, clear_figure=False, use_container_width=True)
-        except Exception:
-            st.write(fig)
-
-# ============================================================
-# INDIVIDUAL REVIEW + ROLE MISMATCH ALARM
-# ============================================================
-st.divider()
-st.header("Bireysel İnceleme + Rol Uyumsuzluğu Alarmı (HP v22.x)")
-
-if "player_id" not in df.columns:
-    st.warning("Bu veri setinde 'player_id' sütunu yok. Bireysel inceleme için player_id zorunludur.")
-    st.stop()
-
-player_ids = sorted(df["player_id"].dropna().unique().tolist())
-if len(player_ids) == 0:
-    st.warning("player_id kolonunda geçerli değer yok.")
-    st.stop()
-
-selected_player = st.selectbox("Oyuncu Seç (player_id)", player_ids)
-
-st.subheader("Rol Uyumsuzluğu Checklist Girdileri (EVET/HAYIR)")
-st.caption("Bilinmiyorsa boş bırak: sistem konservatif (yarım risk) puanlar.")
-
-def _ans(label: str, key: str) -> str:
-    return st.selectbox(label, ["BILINMIYOR", "EVET", "HAYIR"], index=0, key=key)
-
-alarm_answers = {
-    "q1": _ans("1) Birincil rol saha planında net mi?", "q1"),
-    "q2": _ans("2) Oyuncu çizgiye hapsediliyor mu?", "q2"),
-    "q3": _ans("3) Oyuncu izole 1v2–1v3'e itiliyor mu?", "q3"),
-    "q4": _ans("4) Top aldığı bölgeler verimli bölgeyle örtüşüyor mu?", "q4"),
-    "q5": _ans("5) Aynı koridorda duvar/istasyon var mı?", "q5"),
-    "q6": _ans("6) Overlap/underlap desteği planlı mı?", "q6"),
-    "q7": _ans("7) 9 numara pinning yapıyor mu?", "q7"),
-    "q8": _ans("8) Ters kanat arka direk koşusu var mı?", "q8"),
-    "q9": _ans("9) İlk 20 dk hedefli 3+ temas aldı mı?", "q9"),
-    "q10": _ans("10) Sürekli kapalı vücutla mı alıyor?", "q10"),
-    "q11": _ans("11) Aldığı anlarda ikinci opsiyon var mı?", "q11"),
-    "q12": _ans("12) Yük yönetimi planlı mı?", "q12"),
-    "q13": _ans("13) Temas yoğunluğu profile göre ayarlı mı?", "q13"),
-    "q14": _ans("14) Rol iletişimi/güven çerçevesi kuruldu mu?", "q14"),
+# -----------------------------
+# 0) HARD RULES (Popper-like audit contract)
+# -----------------------------
+POPPER_AUDIT_CONTRACT: Dict[str, Any] = {
+    "zero_prediction": True,
+    "evidence_requirement": "evidence_only",
+    "audit_mode": "falsification_first",
+    "no_default_speaking": True,   # if data missing -> abstain/degraded, never default claims
+    "absence_is_not_evidence": True,
 }
 
-st.subheader("Canlı Maç İçi Tetikleyiciler")
-st.caption("2+ tetikleyici görülürse alarm seviyesi bir kademe yükselir.")
-t0 = st.checkbox("10 dakikada 2+ kez 1v2/1v3'e zorlanıyor", value=False)
-t1 = st.checkbox("Top kaybı sonrası geri koşu/itiraz artıyor", value=False)
-t2 = st.checkbox("Her pozisyonda çizgiye sıkışma + geri pas zorunluluğu", value=False)
-t3 = st.checkbox("Duvar yokluğu: ters tarafa şişirme / düşük kaliteli şut", value=False)
-t4 = st.checkbox("Bek desteği yok; sürekli dur-kalk (yük artışı)", value=False)
-alarm_live = [t0, t1, t2, t3, t4]
+# -----------------------------
+# 1) “WHAT WE DID HERE” (single text)
+# -----------------------------
+HP_MOTOR_CONVERSATION_CORE = """
+HP MOTOR — Conversation Consolidation (Working Summary)
 
-engine = IndividualReviewEngine()
+HP Motor; futbolu mevki etiketlerinden bağımsız olarak oyun fazları, rol fonksiyonu, bağlam ve kanıt üzerinden modelleyen;
+veri yoksa susan (ABSTAIN), kanıt zayıfsa degrade olan (DEGRADED), kanıt tutarlıysa konuşan (OK) bir analiz motorudur.
+
+Bu çalışmada:
+- Repo/CI seviyesinde import ve smoke test stabilitesi sağlandı (yeşil).
+- “Veri okunuyor ama tablo/figür boş” probleminin kök nedeni belirlendi:
+  Ingest → Canonical Mapping → Metric Compute → Deliverables zincirinin ortası eksikti.
+- v22 bireysel şablonlar (Bireysel Analiz / Scouting Card / Role Mismatch Alarm) sistemin kalıcı çıktıları olarak konumlandı.
+- “Default ile konuşma” epistemik kırmızı çizgi yapıldı: veri yoksa sus, uydurma yok.
+
+Sıradaki kritik iş:
+- Canonical mapping'in pipeline'a bağlanması ve compute hattının report builder'ı beslemesi.
+""".strip()
+
+# -----------------------------
+# 2) ONTOLOGY (phases + minimal calibration)
+# -----------------------------
+PHASE_INDEX = [
+    {"id": 1, "key": "IP",  "name": "IN-POSSESSION",        "goal": "Manipulation"},
+    {"id": 2, "key": "AD",  "name": "A-D TRANSITION",       "goal": "5-Second Rule"},
+    {"id": 3, "key": "OP",  "name": "OUT-OF-POSSESSION",    "goal": "Compactness"},
+    {"id": 4, "key": "DA",  "name": "D-A TRANSITION",       "goal": "Verticality"},
+    {"id": 5, "key": "ASP", "name": "ATTACKING SET-PIECE",  "goal": "Set-design"},
+    {"id": 6, "key": "DSP", "name": "DEFENDING SET-PIECE",  "goal": "Clean-exit"},
+]
+
+METRIC_CALIBRATION = {
+    "compactness_threshold_m": 25,
+    "scan_elite_rate_s_per_scan": 0.6,
+    "body_angle_limit_deg": 30,
+}
+
+# -----------------------------
+# 3) OPTIONAL BRIDGES to hp_motor (do not break boot)
+# -----------------------------
+SovereignOrchestrator = None
+IndividualReviewEngine = None
 
 try:
-    profile = engine.build_player_profile(
-        df=df,
-        player_id=int(selected_player),
-        role_id=role,
-        alarm_answers=alarm_answers,  # type: ignore
-        alarm_live_triggers=alarm_live,
-        context={},  # v22 şablon alanları için opsiyonel meta
+    from hp_motor.pipelines.run_analysis import SovereignOrchestrator as _SO  # type: ignore
+    SovereignOrchestrator = _SO
+except Exception:
+    SovereignOrchestrator = None
+
+try:
+    from hp_motor.modules.individual_review import IndividualReviewEngine as _IE  # type: ignore
+    IndividualReviewEngine = _IE
+except Exception:
+    IndividualReviewEngine = None
+
+
+# -----------------------------
+# 4) Helpers
+# -----------------------------
+def _safe_read_json(path: str) -> Dict[str, Any]:
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def _download_json(name: str, payload: Dict[str, Any]) -> None:
+    st.download_button(
+        label=f"Download: {name}",
+        data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name=name,
+        mime="application/json",
+        use_container_width=True,
     )
-except Exception as e:
-    st.error(f"Bireysel analiz çalıştırılamadı: {e}")
-    st.stop()
 
-st.subheader("Bireysel Özet")
-st.json(profile.summary)
 
-with st.expander("Bireysel Oyuncu Analizi v22 (Template)", expanded=False):
-    st.markdown(profile.player_analysis_markdown)
+def _build_manifest() -> Dict[str, Any]:
+    return {
+        "product": "HP Motor",
+        "entrypoint": "app.py (Streamlit)",
+        "contracts": {
+            "popper_audit": POPPER_AUDIT_CONTRACT,
+            "ontology": {"phases": PHASE_INDEX, "calibration": METRIC_CALIBRATION},
+        },
+        "modules": {
+            "sovereign_orchestrator_available": bool(SovereignOrchestrator),
+            "individual_review_available": bool(IndividualReviewEngine),
+        },
+        "status_notes": {
+            "core_goal": "No empty deliverables. No default speaking. Evidence-first.",
+            "next_step": "Bind canonical mapping to pipeline; feed report builder with computed metrics.",
+        },
+    }
 
-with st.expander("Scouting Card v22 (Template)", expanded=False):
-    st.markdown(profile.scouting_card_markdown)
 
-with st.expander("Rol Uyumsuzluğu Alarm Checklist (Markdown)", expanded=True):
-    st.markdown(profile.role_mismatch_alarm_markdown)
+# -----------------------------
+# 5) Streamlit UI
+# -----------------------------
+st.set_page_config(page_title="HP Motor — Manifest & Clinic", layout="wide")
+st.title("HP Motor — Manifest / Ontology / Audit / Clinic")
 
-with st.expander("Rol Uyumsuzluğu Alarm (Structured)", expanded=False):
-    st.json(profile.role_mismatch_alarm)
+manifest = _build_manifest()
 
-with st.expander("Diagnostics", expanded=False):
-    st.json(profile.diagnostics)
+tabs = st.tabs([
+    "About",
+    "Conversation Core",
+    "Ontology",
+    "Dictionary",
+    "Audit",
+    "Health",
+    "Analysis (Optional)",
+])
 
-st.subheader("Detaylı Metrikler")
-st.dataframe(pd.DataFrame(profile.metrics), use_container_width=True)
+# --- About
+with tabs[0]:
+    st.subheader("Net Tanım + Modül Sayısı + Amaç")
+    st.write(
+        "HP Motor, faz–rol–bağlam–kanıt ekseninde çalışan; veri yoksa susan ve çıktıyı "
+        "kanıt zinciriyle mühürleyen bir Streamlit analiz uygulamasıdır."
+    )
+    st.markdown("### Manifest")
+    st.json(manifest)
+    _download_json("hp_motor_manifest.json", manifest)
 
-# ============================================================
-# FOOTER
-# ============================================================
-st.divider()
-st.caption("HP Motor — Veri yoksa susar. Çelişki varsa uyarır. Bağlam yanlışsa alarm verir.")
+# --- Conversation Core
+with tabs[1]:
+    st.subheader("Bu sayfada neler yaptık / nereden nereye geldik?")
+    st.code(HP_MOTOR_CONVERSATION_CORE, language="markdown")
+    _download_json("hp_motor_conversation_core.json", {"text": HP_MOTOR_CONVERSATION_CORE})
+
+# --- Ontology
+with tabs[2]:
+    st.subheader("Faz Ontolojisi + Kalibrasyon")
+    st.json({"phases": PHASE_INDEX, "calibration": METRIC_CALIBRATION})
+    _download_json("hp_motor_ontology.json", {"phases": PHASE_INDEX, "calibration": METRIC_CALIBRATION})
+
+# --- Dictionary
+with tabs[3]:
+    st.subheader("Dictionary (opsiyonel)")
+    st.caption("Repo kökünde dictionary.json varsa okur; yoksa boş döner.")
+    data = _safe_read_json(str(ROOT / "dictionary.json"))
+    st.json({"dictionary": data})
+    _download_json("hp_motor_dictionary.json", {"dictionary": data})
+
+# --- Audit
+with tabs[4]:
+    st.subheader("Popper / Audit Sözleşmesi")
+    st.json(POPPER_AUDIT_CONTRACT)
+    st.caption("Bu sözleşme: veri yoksa susmayı, yokluğu kanıt saymamayı ve default ile konuşmamayı zorunlu kılar.")
+    _download_json("hp_motor_audit_contract.json", {"audit": POPPER_AUDIT_CONTRACT})
+
+# --- Health
+with tabs[5]:
+    st.subheader("Health")
+    health = {
+        "status": "ok",
+        "modules": {
+            "SovereignOrchestrator": bool(SovereignOrchestrator),
+            "IndividualReviewEngine": bool(IndividualReviewEngine),
+        },
+        "paths": {
+            "root": str(ROOT),
+            "src_exists": SRC.exists(),
+        },
+    }
+    st.json(health)
+    _download_json("hp_motor_health.json", health)
+
+# --- Analysis (Optional)
+with tabs[6]:
+    st.subheader("Analysis (Optional Bridges)")
+    st.caption(
+        "Bu bölüm, repo'da ilgili motor modülleri varsa çalışır. "
+        "Yoksa uygulama yine ayağa kalkar ve sadece manifest/ontology servis eder."
+    )
+
+    if SovereignOrchestrator is None:
+        st.warning("SovereignOrchestrator import edilemedi. (Normal: bu bir iskelet katmanı.)")
+    else:
+        st.markdown("### Sovereign Orchestrator — Minimal Run")
+        uploaded = st.file_uploader("CSV yükle (opsiyonel)", type=["csv"])
+        if uploaded is not None:
+            import pandas as pd  # local import to avoid unnecessary dependency cost
+
+            df = pd.read_csv(uploaded)
+            st.caption(f"Rows: {len(df)} | Cols: {len(df.columns)}")
+            phase = st.selectbox("Phase", ["open_play", "set_piece", "transition"], index=0)
+            role = st.selectbox("Role", ["mezzala", "pivot", "winger_solver", "cb", "fb"], index=0)
+
+            orch = SovereignOrchestrator()
+            try:
+                out = orch.run(df, phase=phase, role=role)
+            except Exception as e:
+                st.error(f"Orchestrator error: {e}")
+                out = {}
+
+            st.json(out)
+
+    st.divider()
+
+    if IndividualReviewEngine is None:
+        st.warning("IndividualReviewEngine import edilemedi. (Normal: bu bir iskelet katmanı.)")
+    else:
+        st.markdown("### Individual Review — v22 Template Output")
+        uploaded2 = st.file_uploader("CSV yükle (bireysel analiz için)", type=["csv"], key="ind_csv")
+        if uploaded2 is not None:
+            import pandas as pd
+
+            df2 = pd.read_csv(uploaded2)
+            if "player_id" not in df2.columns:
+                st.error("Bu veri setinde 'player_id' yok. Bireysel analiz için zorunlu.")
+            else:
+                player_ids = sorted(df2["player_id"].dropna().unique().tolist())
+                pid = st.selectbox("player_id", player_ids)
+                role2 = st.selectbox("role_id", ["mezzala", "pivot", "winger_solver", "cb", "fb"], index=0, key="ind_role")
+
+                engine = IndividualReviewEngine()
+                profile = engine.build_player_profile(df=df2, player_id=int(pid), role_id=role2)
+
+                st.json(profile.summary)
+                with st.expander("Player Analysis v22", expanded=False):
+                    st.markdown(profile.player_analysis_markdown)
+                with st.expander("Scouting Card v22", expanded=False):
+                    st.markdown(profile.scouting_card_markdown)
+                with st.expander("Role Mismatch Alarm", expanded=True):
+                    st.markdown(profile.role_mismatch_alarm_markdown)
