@@ -1,0 +1,134 @@
+hp_motor:
+  rule: "NO_INPUT_NO_MODULE"   # girdi yoksa modül yok (hallucination önleme)
+  strict: true
+
+inputs:
+  csv:
+    description: "Event tablosu (ham olaylar / aksiyonlar)"
+    enables:
+      - ingestion.events_csv
+      - sot.validator.events_basic
+      - metrics.event.ppda
+      - metrics.event.field_tilt
+      - ontology.phase_basic   # event tabanlı faz proxy (tracking gerektirmeyen)
+    disables_if_missing:
+      - metrics.event.*
+      - ontology.phase_basic
+
+  xml:
+    description: "Opta/Wyscout event zenginleştirme (provider contract)"
+    enables:
+      - ingestion.events_xml
+      - provider_mapping.opta_wyscout
+      - sot.validator.provider_contract
+      - metrics.event.enriched   # (sonraki aşama)
+    requires_any:
+      - csv   # XML tek başına çalışmaz; event ana gövde CSV veya XML'den gelmeli
+    disables_if_missing:
+      - provider_mapping.opta_wyscout
+      - sot.validator.provider_contract
+      - metrics.event.enriched
+
+  xlsx:
+    description: "Fizyo / soma / load / laktat"
+    enables:
+      - ingestion.physio_xlsx
+      - soma.tsi_team_index
+      - soma.tag_layer
+      - load.lactate_threshold
+      - load.injury_risk_flags
+    disables_if_missing:
+      - soma.*
+      - load.*
+
+  mp4:
+    description: "Video (CV tracking, homography, ghosting)"
+    enables:
+      - cv.detection
+      - cv.tracking
+      - cv.homography
+      - spatial.pitch_control
+      - spatial.voronoi
+      - spatial.ghosting
+      - sot.validator.tracking_event_alignment
+    requires_any:
+      - csv
+      - xml
+    disables_if_missing:
+      - cv.*
+      - spatial.*
+      - sot.validator.tracking_event_alignment
+
+  pdf:
+    description: "Doküman bilgi kaynağı (constraints / ontology notes)"
+    enables:
+      - knowledge.reader_pdf
+      - knowledge.constraints
+    disables_if_missing:
+      - knowledge.reader_pdf
+
+  docx:
+    description: "Doküman bilgi kaynağı"
+    enables:
+      - knowledge.reader_docx
+      - knowledge.constraints
+    disables_if_missing:
+      - knowledge.reader_docx
+
+  txt:
+    description: "Notlar, sözlükler, playbook"
+    enables:
+      - knowledge.reader_txt
+      - knowledge.dictionary
+      - knowledge.constraints
+    disables_if_missing:
+      - knowledge.reader_txt
+      - knowledge.dictionary
+
+  html:
+    description: "UI mock / dashboard spec / web knowledge"
+    enables:
+      - knowledge.reader_html
+      - ui.spec_loader
+    disables_if_missing:
+      - knowledge.reader_html
+      - ui.spec_loader
+
+combinations:
+  # Minimum çalışır paketler
+  - name: "EVENT_ONLY_MIN"
+    requires: [csv]
+    enables: [metrics.event.ppda, metrics.event.field_tilt, ontology.phase_basic]
+    blocks: [soma.*, load.*, cv.*, spatial.*]
+
+  - name: "EVENT_PLUS_PROVIDER"
+    requires: [csv, xml]
+    enables: [provider_mapping.opta_wyscout, sot.validator.provider_contract]
+    blocks: [cv.*, spatial.*]  # video yoksa yine kapalı
+
+  - name: "EVENT_PLUS_SOMA"
+    requires: [csv, xlsx]
+    enables: [soma.tsi_team_index, soma.tag_layer, load.lactate_threshold]
+    blocks: [cv.*, spatial.*]
+
+  - name: "FULL_STACK"
+    requires: [csv, xml, xlsx, mp4]
+    enables: [cv.*, spatial.*, soma.*, load.*, provider_mapping.*]
+    blocks: []
+
+guardrails:
+  - rule: "NO_SOMA_WITHOUT_XLSX"
+    if_missing: [xlsx]
+    hard_block: [soma.*, load.*]
+
+  - rule: "NO_CV_WITHOUT_MP4"
+    if_missing: [mp4]
+    hard_block: [cv.*, spatial.*]
+
+  - rule: "NO_PROVIDER_CONTRACT_WITHOUT_XML"
+    if_missing: [xml]
+    hard_block: [provider_mapping.opta_wyscout, sot.validator.provider_contract]
+
+  - rule: "NO_EVENT_METRICS_WITHOUT_EVENTS"
+    if_missing: [csv, xml]
+    hard_block: [metrics.event.*, ontology.phase_basic]
