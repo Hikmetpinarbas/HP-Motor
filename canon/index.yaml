@@ -1,9 +1,21 @@
-ontology:
-  football: canon/ontology/football_ontology.json
-  metric: canon/ontology/metric_ontology.json
+version: "2026.1"
 
-mappings:
-  platforms: canon/mappings/platform_mappings.json
+ssot_policy:
+  single_source_of_truth: true
+  primary: engine
+  secondary: legacy_motor
 
-registry:
-  core: canon/registry/registry.json
+sources:
+  engine:
+    root: "canon/engine"
+    engine_registry_root: "canon/engine_registry"
+  legacy_motor:
+    root: "canon"
+    files:
+      - "canon/football_ontology.json"
+      - "canon/metric_ontology.json"
+      - "canon/platform_mappings.json"
+      - "canon/registry.json"
+
+contracts:
+  canonical_pitch: "105x68"
