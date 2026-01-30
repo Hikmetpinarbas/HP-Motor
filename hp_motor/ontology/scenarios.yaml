@@ -1,7 +1,27 @@
-scenarios:
-  - S0_BASELINE
-  - S1_LEADING
-  - S2_TRAILING
-  - S3_RED_CARD
-  - S4_FATIGUE
-  - S5_SET_PIECE_HEAVY
+version: 1
+scenario_nodes:
+  - id: S0_NORMAL
+    definition_tr: "Dengeli oyun; özel baskı/eksik/son bölüm koşulu yok."
+    conditions_hint:
+      SCORE_STATE: [leading, drawing, trailing]
+  - id: S1_CHASING_GOAL
+    definition_tr: "Gerideyken skor arama; risk profili yükselir."
+    conditions_hint:
+      SCORE_STATE: [trailing]
+  - id: S2_PROTECTING_LEAD
+    definition_tr: "Öndeyken skoru koruma; kontrol ve risk yönetimi öncelikli."
+    conditions_hint:
+      SCORE_STATE: [leading]
+  - id: S3_NUMERICAL_DISADV
+    definition_tr: "Sayısal dezavantaj; blok ve risk davranışı yeniden ölçeklenir."
+    conditions_hint:
+      NUMERICAL_STATE: [minus1, minus2]
+  - id: S4_HIGH_PRESSURE_WINDOW
+    definition_tr: "Yoğun baskı penceresi; pres ve geçiş metrikleri öncelikli."
+    conditions_hint:
+      OPP_PRESSURE: [high]
+  - id: S5_LATE_GAME_FATIGUE
+    definition_tr: "Geç oyun yorgunluğu; motor düşüşü ve karar hatası riski artar."
+    conditions_hint:
+      MINUTE: [75, 120]
+      FATIGUE: [med, high]
