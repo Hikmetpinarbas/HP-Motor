@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -16,7 +15,7 @@ from typing import Dict, List, Tuple
 ARTIFACTS_DIR = Path("artifacts") / "import"
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
-RX_TR = str.maketrans({"ı":"i","ğ":"g","ü":"u","ş":"s","ö":"o","ç":"c"})
+RX_TR = str.maketrans({"ı": "i", "ğ": "g", "ü": "u", "ş": "s", "ö": "o", "ç": "c"})
 
 def norm(s: str) -> str:
     x = (s or "").strip().lower().translate(RX_TR)
@@ -40,24 +39,19 @@ class Route:
     reason: str
 
 def decide_route(p: Path) -> Route:
-    """
-    Routing policy (lite-core friendly):
-    - Keep everything under inputs; only copy selected artifacts into registry inputs buckets.
-    """
     name = p.name
     n = norm(name)
     ext = p.suffix.lower()
 
     # --- registry canonical candidates ---
-    # metric encyclopedia / registry / contract / ontology maps etc.
     if ext in {".json", ".yaml", ".yml", ".csv", ".xlsx"}:
-        if "metric_encyclopedia" in n or "metric_dictionary" in n:
+        if ("metric_encyclopedia" in n) or ("metric_dictionary" in n) or ("hp_metric" in n and "encyclopedia" in n):
             return Route("registry/canonical", Path("hp_motor/library/registry/inputs/canonical"), "metric encyclopedia/dictionary")
-        if "metric_registry" in n or (("registry" in n) and ("metric" in n)):
-            return Route("registry/vendor", Path("hp_motor/library/registry/inputs/vendor"), "vendor registry")
-        if "6faz" in n or "phase" in n or "map" in n or "index" in n:
+        if ("metric_registry" in n) or (("registry" in n) and ("metric" in n)) or ("sportsbase_metrics" in n):
+            return Route("registry/vendor", Path("hp_motor/library/registry/inputs/vendor"), "vendor registry/metrics")
+        if ("6faz" in n) or ("phase" in n) or ("map" in n) or ("index" in n):
             return Route("registry/maps", Path("hp_motor/library/registry/inputs/maps"), "phase/map/index")
-        if "guide" in n or "readme" in n or "integration" in n:
+        if ("guide" in n) or ("readme" in n) or ("integration" in n):
             return Route("registry/guides", Path("hp_motor/library/registry/inputs/guides"), "guide/readme")
 
     # --- docs / research ---
@@ -65,31 +59,22 @@ def decide_route(p: Path) -> Route:
         # keep as docs, not in core
         return Route("docs", Path("hp_motor/library/inputs/drive_hp_proj_docs"), "documents/research")
 
-    # --- packages / zips ---
+    # --- packages ---
     if ext in {".zip", ".7z", ".rar"}:
         return Route("packages", Path("hp_motor/library/inputs/drive_hp_proj_packages"), "zip packages")
 
-    # --- other ---
     return Route("other", Path("hp_motor/library/inputs/drive_hp_proj_other"), "uncategorized")
 
 def safe_copy(src: Path, dest_dir: Path, dedupe_by_hash: Dict[str, str]) -> Tuple[str, str]:
-    """
-    Copy with content dedupe:
-    - If same hash already copied, skip.
-    - If name collision with different hash, suffix with _dupN.
-    Returns (status, dest_path_str)
-    """
     dest_dir.mkdir(parents=True, exist_ok=True)
     h = sha256(src)
 
     if h in dedupe_by_hash:
         return ("skipped_duplicate_hash", dedupe_by_hash[h])
 
-    base = src.name
-    dest = dest_dir / base
+    dest = dest_dir / src.name
 
     if dest.exists():
-        # if identical, treat as dup-hash
         try:
             if sha256(dest) == h:
                 dedupe_by_hash[h] = str(dest)
@@ -113,7 +98,7 @@ def safe_copy(src: Path, dest_dir: Path, dedupe_by_hash: Dict[str, str]) -> Tupl
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", default="hp_motor/library/inputs/drive_hp_proj", help="source folder (already synced into repo inputs)")
+    ap.add_argument("--src", default="hp_motor/library/inputs/drive_hp_proj", help="source folder")
     ap.add_argument("--apply", action="store_true", help="actually copy routed files (default: dry-run)")
     args = ap.parse_args()
 
@@ -142,8 +127,7 @@ def main() -> int:
     for p in files_sorted:
         try:
             r = decide_route(p)
-            key = r.bucket
-            report["routes"][key] = report["routes"].get(key, 0) + 1
+            report["routes"][r.bucket] = report["routes"].get(r.bucket, 0) + 1
 
             if args.apply:
                 status, dest = safe_copy(p, r.dest_dir, dedupe_by_hash)
@@ -162,6 +146,7 @@ def main() -> int:
 
     out = ARTIFACTS_DIR / "drive_import_report.json"
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
     print("OK: import report ->", out)
     print("file_count:", report["file_count"])
     print("apply:", report["apply"])
