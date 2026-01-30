@@ -1,0 +1,9 @@
+{
+  "version": "0.1.0",
+  "metrics": [
+    {"id":"M_PASS_COUNT","label":"Pass Count","layer":"micro","mechanisms":["kontrol","ilerletme"],"definition":"Number of pass events.","status_policy":"OK|DEGRADED|UNKNOWN"},
+    {"id":"M_PROG_PASS_COUNT","label":"Progressive Pass Count","layer":"micro","mechanisms":["ilerletme","risk"],"definition":"Passes with (end_x-start_x) >= threshold.","status_policy":"OK|DEGRADED|UNKNOWN"},
+    {"id":"M_SHOT_COUNT","label":"Shot Count","layer":"micro","mechanisms":["deger","risk"],"definition":"Number of shot events.","status_policy":"OK|DEGRADED|UNKNOWN"},
+    {"id":"M_TURNOVER_COUNT","label":"Turnover Count","layer":"micro","mechanisms":["risk"],"definition":"Vendor-neutral proxy of possession-losing events.","status_policy":"OK|DEGRADED|UNKNOWN"}
+  ]
+}

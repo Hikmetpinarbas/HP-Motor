@@ -1,3 +1,16 @@
+# Python
 __pycache__/
 *.pyc
-hp_report.json
+*.pyo
+*.pyd
+
+# Virtualenv
+.venv/
+venv/
+
+# Local artifacts / outputs / datasets
+artifacts/
+tools/_scratch/
+
+# OS
+.DS_Store

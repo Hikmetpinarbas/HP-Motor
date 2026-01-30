@@ -1,0 +1,14 @@
+ontology_version: "0.1.0"
+phases:
+  - id: P1_ATTACK_BUILD
+    label: "Attack Build"
+  - id: P2_ATTACK_PROG
+    label: "Attack Progression"
+  - id: P3_ATTACK_FINAL
+    label: "Attack Finalization"
+  - id: P4_DEF_BLOCK
+    label: "Defensive Block"
+  - id: P5_DEF_PRESS
+    label: "Defensive Press"
+  - id: P6_TRANSITION
+    label: "Transition"

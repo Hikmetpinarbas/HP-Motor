@@ -1,0 +1,7 @@
+scenarios:
+  - S0_BASELINE
+  - S1_LEADING
+  - S2_TRAILING
+  - S3_RED_CARD
+  - S4_FATIGUE
+  - S5_SET_PIECE_HEAVY
