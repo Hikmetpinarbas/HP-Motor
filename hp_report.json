@@ -1,0 +1,9 @@
+{
+  "hp_motor_version": "1.0",
+  "project": "Galatasaray analytical engine",
+  "sources": [],
+  "teams": {},
+  "degraded": [
+    "Event source not found: Manchester City 2-0 Galatasaray 28.01.2026, Maçın Tamamı.csv"
+  ]
+}
