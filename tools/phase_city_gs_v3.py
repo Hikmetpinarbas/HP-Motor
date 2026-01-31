@@ -2,26 +2,23 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from tools._shared import load_polarity_dict
+DICT_PATH = "tools/dicts_city_gs.json"
+
 CORE = "data/processed/city_gs_events_core.csv"
 OUT_DIR = "artifacts/phase"
 BIN_MIN = 5.0
 
-POSITIVE = {
-    "paslar adresi bulanlar",
-    "playing in set-piece attacks",
-    "successful pass",
-    "goal",
-    "shot on target",
-}
-NEGATIVE = {
-    "incomplete passes forward",
-    "incomplete passes",
-    "isabetsiz paslar",
-}
 
-def score_action(label):
+def score_action(label, POS, NEG):
     if not isinstance(label, str):
         return 0
+    l = label.strip().lower()
+    if l in POS:
+        return 1
+    if l in NEG:
+        return -1
+    return 0
     l = label.lower()
     for p in POSITIVE:
         if p in l:
@@ -32,12 +29,13 @@ def score_action(label):
     return 0
 
 def main():
+    POS, NEG, NEU, META = load_polarity_dict(DICT_PATH)
     df = pd.read_csv(CORE)
     df = df.dropna(subset=["team_name"]).copy()
     df = df.sort_values(["half", "t_start", "event_id"], na_position="last").reset_index(drop=True)
 
     df["bin"] = (df["t_start"] // BIN_MIN) * BIN_MIN
-    df["mom_evt"] = df["action_label"].apply(score_action)
+    df["mom_evt"] = df["action_label"].apply(lambda x: score_action(x, POS, NEG))
 
     # switch count within each (half, bin)
     df["prev_team"] = df.groupby(["half", "bin"])["team_name"].shift(1)

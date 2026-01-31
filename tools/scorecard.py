@@ -3,26 +3,23 @@ import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from tools._shared import load_polarity_dict
+DICT_PATH = "tools/dicts_city_gs.json"
+
 CORE_DEFAULT = "data/processed/city_gs_events_core.csv"
 PHASE_DEFAULT = "artifacts/phase/city_gs_phase_5min.csv"
 LABEL_DEFAULT = "phase_label"
 
-POSITIVE = {
-    "paslar adresi bulanlar",
-    "playing in set-piece attacks",
-    "successful pass",
-    "goal",
-    "shot on target",
-}
-NEGATIVE = {
-    "incomplete passes forward",
-    "incomplete passes",
-    "isabetsiz paslar",
-}
 
-def score_action(label):
+def score_action(label, POS, NEG):
     if not isinstance(label, str):
         return 0
+    l = label.strip().lower()
+    if l in POS:
+        return 1
+    if l in NEG:
+        return -1
+    return 0
     l = label.lower()
     for p in POSITIVE:
         if p in l:
@@ -40,11 +37,13 @@ def main():
     ap.add_argument("--outdir", default="artifacts/scorecard")
     args = ap.parse_args()
 
+    POS, NEG, NEU, META = load_polarity_dict(DICT_PATH)
+
     os.makedirs(args.outdir, exist_ok=True)
 
     core = pd.read_csv(args.core)
     core = core.dropna(subset=["team_name"]).copy()
-    core["score"] = core["action_label"].apply(score_action)
+    core["score"] = core["action_label"].apply(lambda x: score_action(x, POS, NEG))
 
     # match duration proxy
     dur = core.groupby("half")["t_start"].max().fillna(0).to_dict()

@@ -2,6 +2,9 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from tools._shared import load_polarity_dict
+DICT_PATH = "tools/dicts_city_gs.json"
+
 SRC = "data/processed/city_gs_events_core.csv"
 OUT_DIR = "artifacts/momentum"
 BIN_MIN = 5.0  # minutes
@@ -20,9 +23,15 @@ NEGATIVE = {
     "isabetsiz paslar",
 }
 
-def score_action(label):
+def score_action(label, POS, NEG):
     if not isinstance(label, str):
         return 0
+    l = label.strip().lower()
+    if l in POS:
+        return 1
+    if l in NEG:
+        return -1
+    return 0
     l = label.lower()
     for p in POSITIVE:
         if p in l:
@@ -33,6 +42,7 @@ def score_action(label):
     return 0
 
 def main():
+    POS, NEG, NEU, META = load_polarity_dict(DICT_PATH)
     df = pd.read_csv(SRC)
 
     # basic guards
