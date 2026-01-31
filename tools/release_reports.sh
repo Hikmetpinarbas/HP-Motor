@@ -60,6 +60,11 @@ echo "[OK] copied -> ~/storage/downloads/$(basename "$LATEST_ZIP")"
 echo "[OK] contents:"
 zipinfo -1 "$LATEST_ZIP" | sed -n '1,200p'
 
+ZIP_LIST="$(zipinfo -1 "$LATEST_ZIP")"
+TOPDIR="$(printf "%s\n" "$ZIP_LIST" | head -n 1 | sed 's:/$::')"
+if [ -z "$TOPDIR" ]; then echo "[ERR] cannot detect zip topdir"; exit 90; fi
+
+
 echo "[5/5] verify zip contents"
 REQUIRED=()
 while IFS= read -r line; do
@@ -69,7 +74,7 @@ done < "tools/release_requirements.txt"
 
 missing=0
 for req in "${REQUIRED[@]}"; do
-  if ! zipinfo -1 "$LATEST_ZIP" | grep -qx "$req"; then
+  if ! zipinfo -1 "$LATEST_ZIP" | grep -qx "$TOPDIR/$req"; then
     echo "[ERR] missing in zip: $req"
     missing=1
   fi
