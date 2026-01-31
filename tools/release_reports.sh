@@ -61,16 +61,11 @@ echo "[OK] contents:"
 zipinfo -1 "$LATEST_ZIP" | sed -n '1,200p'
 
 echo "[5/5] verify zip contents"
-REQUIRED=(
-  "$TS/standings__normalized.csv"
-  "$TS/goal_timing__normalized.csv"
-  "$TS/passes_players_split__normalized.csv"
-  "$TS/goal_timing_team_profile.csv"
-  "$TS/passes_players_top_attempted.csv"
-  "$TS/passes_players_top_pct_min50.csv"
-  "$TS/passes_team_summary.csv"
-  "$TS/manifest.json"
-)
+REQUIRED=()
+while IFS= read -r line; do
+  [[ "$line" =~ ^#|^$ ]] && continue
+  REQUIRED+=("$line")
+done < "tools/release_requirements.txt"
 
 missing=0
 for req in "${REQUIRED[@]}"; do
