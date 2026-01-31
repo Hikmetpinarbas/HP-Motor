@@ -50,7 +50,7 @@ def main():
     assert "team_name" in df.columns
     assert "action_label" in df.columns
 
-    df["score"] = df["action_label"].apply(score_action)
+    df["score"] = df["action_label"].apply(lambda x: score_action(x, POS, NEG))
 
     # time binning
     df["bin"] = (df["t_start"] // BIN_MIN) * BIN_MIN
