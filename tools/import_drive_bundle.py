@@ -117,8 +117,22 @@ def main() -> int:
         "actions": [],
         "top_largest": [],
         "errors": [],
+        "warnings": [],
     }
 
+
+    # --- inbox hygiene (dry-run warning only) ---
+    # If docs are still in INBOX, the repo may grow silently.
+    inbox_doc_ext = {".pdf", ".docx", ".txt", ".md"}
+    inbox_docs = [p for p in files if p.suffix.lower() in inbox_doc_ext]
+    if inbox_docs:
+        total_bytes = sum(p.stat().st_size for p in inbox_docs)
+        report["warnings"].append({
+            "kind": "inbox_contains_docs",
+            "doc_count": len(inbox_docs),
+            "total_bytes": total_bytes,
+            "note": "INBOX contains docs; prefer routing into drive_hp_proj_docs and keeping INBOX small."
+        })
     for p in files_sorted[:30]:
         report["top_largest"].append({"size": p.stat().st_size, "path": str(p)})
 
