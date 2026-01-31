@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
 MOM_PNG = "artifacts/momentum/city_gs_momentum_5min.png"
-PHASE_V3_PNG = "artifacts/phase/city_gs_phase_5min_v3.png"
-PHASE_V6_SHARES = "artifacts/phase/city_gs_phase_shares_v6.png"
+PHASE_V3_PNG = "artifacts/phase/city_gs_phase_5min_v7.png"
+PHASE_V6_SHARES = "artifacts/phase/city_gs_phase_shares_v7.png"
 SCORE_PNG = "artifacts/scorecard/city_gs_scorecard.png"
 
 OUT = "artifacts/dashboard/city_gs_dashboard.png"
@@ -21,9 +21,9 @@ def safe_img(path):
 def main():
     imgs = {
         "Momentum (5min)": safe_img(MOM_PNG),
-        "Possession+Momentum (v3)": safe_img(PHASE_V3_PNG),
-        "Phase shares (v6)": safe_img(PHASE_V6_SHARES),
-        "Scorecard (v6)": safe_img(SCORE_PNG),
+        "Possession+Momentum (v7)": safe_img(PHASE_V3_PNG),
+        "Phase shares (v7)": safe_img(PHASE_V6_SHARES),
+        "Scorecard (v7)": safe_img(SCORE_PNG),
     }
 
     missing = [k for k,v in imgs.items() if v is None]
