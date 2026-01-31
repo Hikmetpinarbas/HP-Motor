@@ -39,3 +39,7 @@ data/reports/_incoming/**/*.pdf
 # generated
 out/
 artifacts/
+
+# generated
+out/
+artifacts/reports/normalized/
