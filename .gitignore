@@ -29,3 +29,5 @@ hp_motor/library/registry/inputs/
 hp_motor/library/registry/*.bak_*.json
 hp_motor/library/inputs/
 data/
+data/
+library/raw/
