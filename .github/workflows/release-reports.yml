@@ -1,0 +1,51 @@
+name: Release Reports
+
+on:
+  push:
+    tags:
+      - "v*-reports"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip unzip
+
+      - name: Create venv + install (best effort)
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run release script
+        run: |
+          chmod +x tools/release_reports.sh
+          ./tools/release_reports.sh
+
+      - name: Find latest zip
+        id: findzip
+        run: |
+          ZIP="$(ls -1t out/exports/*.zip | head -n 1)"
+          echo "zip_path=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "zip_name=$(basename "$ZIP")" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release + upload asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.findzip.outputs.zip_path }}
