@@ -16,6 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="Run lite-core pipeline and output report json")
     r.add_argument("--events", required=True, help="Path to events (.json/.jsonl/.csv)")
     r.add_argument("--out", required=True, help="Output report path (json)")
+    r.add_argument("--run-dir", default=None, help="Run directory (writes hp_report.json inside)")
     r.add_argument("--vendor", default="generic", help="Vendor mapping key")
     return p
 
@@ -27,7 +28,12 @@ def main() -> int:
         events_path = Path(args.events)
         report = run_pipeline(events_path, vendor=args.vendor)
 
-        out = Path(args.out)
+        if args.run_dir:
+            run_dir = Path(args.run_dir)
+            run_dir.mkdir(parents=True, exist_ok=True)
+            out = run_dir / "hp_report.json"
+        else:
+            out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
