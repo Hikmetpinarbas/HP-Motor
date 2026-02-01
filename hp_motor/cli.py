@@ -4,7 +4,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from hp_motor.pipeline import run_pipeline
+from hp_motor.pipeline.run_pipeline import run as run_pipeline
 from hp_motor.library import library_health
 from hp_motor.library.loader import _resolve
 
