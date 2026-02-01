@@ -6,6 +6,7 @@ from pathlib import Path
 
 from hp_motor.pipeline import run_pipeline
 from hp_motor.library import library_health
+from hp_motor.library.loader import _resolve
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,6 +41,10 @@ def main() -> int:
             "out_report_path": str(out),
             "report_keys": list(report.keys()),
             "events_summary": report.get("events_summary", {}),
+                        "registry_paths": {
+                "vendor_mappings": str(_resolve("registry/vendor_mappings_compiled.json")[0]),
+                "metric_registry": str(_resolve("registry/metric_registry.json")[0]),
+            },
             "library_health": {
                 "status": lib_h.status,
                 "flags": list(lib_h.flags),
